@@ -1,0 +1,1507 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>调查链画布</title>
+<style>
+:root{
+  color-scheme:dark; --ink:#f0eeec; --muted:#a7a6a6; --paper:#19191c; --canvas:#18181b;
+  --line:#37363b; --surface:#242429; --raised:#2c2c31; --accent:#ff9279; --accent-bg:#422c28;
+  --green:#80d5b2; --green-bg:#263c35; --red:#ff9d92; --red-bg:#442e30; --amber:#eac386;
+  --amber-bg:#423729; --grey:#bcbec9; --grey-bg:#36363d; --edge:#797989;
+  font:14px Inter,"Microsoft YaHei UI","PingFang SC",system-ui,sans-serif; color:var(--ink); background:var(--paper)
+}
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0} button,select{font:inherit;color:inherit} button{cursor:pointer}
+button:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+[hidden]{display:none!important} h1,h2,h3,p{margin:0} button:disabled{cursor:default;opacity:.45}
+.top,.brand,.top-actions,.toolbar,.filters,.zoom,.legend,.key,.inspector-head{display:flex;align-items:center}
+.top{min-height:63px;justify-content:space-between;gap:16px;padding:10px 22px;border-bottom:1px solid var(--line)}
+.brand{gap:11px;min-width:0}.brand h1{font-size:16px;font-weight:680;white-space:nowrap}
+.brand-mark{width:34px;height:34px;display:grid;place-items:center;background:var(--accent-bg);color:var(--accent);border-radius:7px;flex:none}
+.brand-mark svg{width:21px;height:21px}.top-actions{gap:8px}
+.control,.icon-button{border:1px solid var(--line);border-radius:6px;background:var(--surface);white-space:nowrap}
+.control{padding:7px 11px}.control:hover,.icon-button:hover{background:var(--raised)}
+.icon-button{width:32px;height:32px;padding:0;display:grid;place-items:center}
+.icon-button svg,.control svg,.key svg{width:16px;height:16px}
+.import{display:flex;align-items:center;gap:7px;background:var(--accent);border-color:var(--accent);color:#242024;font-weight:700}
+.import:hover{background:#ffab99}.case-select{max-width:260px;text-overflow:ellipsis}
+.watch[aria-pressed="true"]{color:var(--green);border-color:#487060;background:#26392f}
+.example{font-size:11px;color:var(--amber);padding:2px 7px;border:1px solid #5e4a33;background:var(--amber-bg);border-radius:5px;white-space:nowrap}
+.notice{padding:10px 18px;color:var(--red);background:var(--red-bg)}
+.workbench{display:grid;grid-template-columns:minmax(0,1fr) 303px;height:calc(100dvh - 63px);min-height:570px}
+.workbench.with-index{grid-template-columns:214px minmax(0,1fr) 303px}.index,.inspector{overflow:auto;min-width:0;background:var(--paper)}
+.index{padding:16px 12px;border-right:1px solid var(--line)}.section-heading{font-size:12px;font-weight:670;margin:0 8px 10px}
+.claim-list{display:grid;gap:3px}.list-item{display:flex;align-items:flex-start;gap:8px;width:100%;text-align:left;background:transparent;border:1px solid transparent;border-radius:6px;padding:7px 8px;line-height:1.5}
+.list-item span:last-child{overflow-wrap:anywhere}.list-item:hover{background:var(--surface)}.list-item.active{background:var(--accent-bg);border-color:#795449}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--tone,var(--grey));display:inline-block;flex:none}.list-item .dot{margin-top:7px}
+.panel{min-width:0;min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr)}.toolbar{gap:10px;padding:9px 15px;border-bottom:1px solid var(--line);background:var(--paper)}
+.toolbar .toolbar-count{font-size:12px;color:var(--muted);margin-left:auto;white-space:nowrap}
+.filters{gap:2px;background:#232327;padding:3px;border:1px solid #333239;border-radius:7px}
+.filters button{border:0;background:transparent;border-radius:4px;padding:5px 9px;font-size:12px;color:var(--muted);white-space:nowrap}
+.filters button:hover{color:var(--ink)}.filters [aria-pressed="true"]{background:#39383d;color:var(--ink);font-weight:680}
+.viewport{position:relative;min-height:430px;overflow:hidden;isolation:isolate;touch-action:none;cursor:grab;background:radial-gradient(circle,#39383e 1px,transparent 1.12px) 0 0/19px 19px,var(--canvas)}
+.viewport.panning,.viewport.moving,.viewport.moving .node{cursor:grabbing}
+.scene{position:absolute;top:0;left:0;transform-origin:0 0;will-change:transform}
+.edges{position:absolute;inset:0;overflow:visible;pointer-events:none}
+.edge{fill:none;stroke:var(--edge);stroke-width:1.55;stroke-linecap:round}.edge.green{stroke:#64b999}
+.edge.red{stroke:#e88e86;stroke-dasharray:6 4}.edge.context{stroke:#8b8b9c;stroke-dasharray:2 6}
+.edge.dim{opacity:.28}.edge.lit{stroke-width:2.2}.edge.lit:not(.red):not(.context):not(.green){stroke:var(--accent)}
+.lane{position:absolute;display:flex;align-items:center;gap:7px;color:#b6b5bb;font-weight:660;font-size:12px;white-space:nowrap}
+.lane svg{width:15px;height:15px;color:#9694a1}
+.node{position:absolute;text-align:left;background:var(--surface);border:1px solid #4a4952;border-radius:8px;padding:6px 10px;box-shadow:0 3px 9px #0005;display:flex;align-items:center;gap:9px;line-height:1.33;cursor:grab}
+.node:hover{border-color:#af9c95}.node.chosen{border-color:var(--accent);box-shadow:0 0 0 2px #ff92794a,0 5px 12px #0007}.node.dim{opacity:.74}
+.node.root{background:#302523;border-color:#926052}.node.root.chosen{border-color:var(--accent)}
+.node-caption{display:grid;min-width:0;gap:4px}.node-title{font-weight:695;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;font-size:13px}
+.root .node-title{font-size:17px}.node .sub{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.root .node-title,.node.evidence .node-title{display:block;white-space:nowrap;text-overflow:ellipsis}
+.node-icon{width:31px;height:31px;flex:none;display:grid;place-items:center;border-radius:6px;background:var(--tint,var(--raised));color:var(--tone,var(--grey))}
+.node-icon svg{width:17px;height:17px}.root .node-icon{width:34px;height:34px;background:#53352d;color:#ffac97}
+.node.evidence .node-icon{width:29px;height:29px}
+.port{position:absolute;width:9px;height:9px;border:1.5px solid #b3aebf;background:#26262b;border-radius:50%;top:50%;transform:translateY(-50%);pointer-events:none}
+.port.in{left:-5px}.port.out{right:-5px}.root .port{border-color:var(--accent)}.evidence .port{border-color:var(--tone,var(--grey))}
+.green{--tone:var(--green);--tint:var(--green-bg)}.red{--tone:var(--red);--tint:var(--red-bg)}
+.amber{--tone:var(--amber);--tint:var(--amber-bg)}.grey,.context{--tone:var(--grey);--tint:var(--grey-bg)}
+.badge{display:inline-block;max-width:100%;width:max-content;font-size:11px;line-height:1.45;border-radius:4px;padding:1px 5px;font-weight:650;color:var(--tone);background:var(--tint);white-space:nowrap}
+.legend{position:absolute;top:13px;left:15px;gap:13px;flex-wrap:wrap;padding:7px 9px;background:var(--paper);border:1px solid var(--line);border-radius:7px;font-size:11px;color:var(--muted);cursor:default}
+.key{gap:5px}.key i{width:18px;border-top:2px solid #64b999}.key i.red-line{border-color:#e88e86;border-top-style:dashed}.key i.grey-line{border-color:#8b8b9c;border-top-style:dotted}
+.zoom{position:absolute;left:15px;bottom:15px;gap:2px;background:var(--paper);border:1px solid var(--line);box-shadow:0 4px 12px #0004;padding:3px;border-radius:7px;cursor:default}
+.zoom button{border-color:transparent;background:transparent}.zoom button:hover{background:var(--raised)}
+.zoom span{font-size:12px;min-width:42px;text-align:center;color:var(--muted);font-variant-numeric:tabular-nums}
+.zoom .separator{width:1px;height:19px;min-width:0;background:var(--line);margin:0 3px}
+.minimap{position:absolute;right:15px;bottom:15px;width:166px;height:100px;display:grid;place-items:center;border:1px solid var(--line);background:#111114;border-radius:7px;padding:4px;cursor:crosshair}
+.minimap svg{width:100%;height:100%;pointer-events:none}.map-node{fill:#777482}.map-root{fill:var(--accent)}.map-green{fill:#64b999}.map-red{fill:#e88e86}
+.map-window{fill:#d1ccdf0d;stroke:#a8a3b8;stroke-width:1}
+.inspector{border-left:1px solid var(--line);display:flex;flex-direction:column}.inspector-head{min-height:49px;border-bottom:1px solid var(--line);padding:0 16px;gap:8px;font-weight:670;font-size:12px;color:var(--muted)}
+.inspector-head svg{width:16px;height:16px}.inspector-content{padding:17px 16px 20px}
+.inspector .label{font-size:12px;color:var(--muted);margin-bottom:6px}.inspector h2{font-size:18px;overflow-wrap:anywhere;line-height:1.44;margin-bottom:11px}
+.details{display:grid;gap:13px}.detail-block{border-top:1px solid var(--line);padding-top:11px;display:grid;gap:6px}.detail-block h3{font-size:13px}
+.detail-block p,.detail-block a,.quote,.anchors li{font-size:13px;line-height:1.65;overflow-wrap:anywhere}
+.detail-block p{color:var(--muted)}.detail-block a{color:var(--accent);text-underline-offset:3px}
+.quote{background:var(--surface);border-left:2px solid var(--accent);padding:9px 10px;margin:0}.anchors{margin:0;padding-left:16px}
+.ev-list{display:grid;gap:5px}.ev-list .list-item{background:var(--surface);font-size:12px}.ev-list .list-item:hover{background:var(--raised)}
+.empty{position:absolute;inset:0;display:grid;place-items:center;color:var(--muted);text-align:center;padding:16px;cursor:default;pointer-events:none}
+.empty div{display:grid;justify-items:center;gap:12px}.empty svg{width:29px;height:29px;color:var(--accent)}.empty strong{font-size:16px;color:var(--ink)}
+.node.claim{border-color:#544f55;box-shadow:0 6px 16px #0007}.node.claim.green{border-color:#486257}.node.claim.red{border-color:#795052}.node.claim.amber{border-color:#706047}.node.claim.chosen{border-color:var(--accent)}
+.node.claim .badge{background:transparent;padding-inline:0;font-weight:580}.node.claim .node-icon{width:38px;height:38px}.node.claim .node-icon svg{width:19px;height:19px}.node-caption{min-width:0}
+.edge.amber{stroke:#be9c63}.key i.amber-line{border-color:#be9c63}.map-amber{fill:#be9c63}
+.source-rows,.run-list{display:grid;gap:7px}.source-row{border:1px solid var(--line);background:var(--surface);border-radius:6px}.source-row summary{cursor:pointer;padding:8px 10px;color:var(--ink);line-height:1.4;overflow-wrap:anywhere;font-size:12px}.source-row .quote{margin:0 9px 8px;background:var(--paper)}.source-row p,.source-row a,.source-row ul{margin:0 9px 7px}.source-row p:last-child{margin-bottom:9px}.source-row a{display:inline-block}.run-row{display:grid;gap:3px;padding:0 0 8px 10px;border-left:2px solid #544c4c}.run-row:last-child{padding-bottom:0}.run-row strong{font-size:12px;overflow-wrap:anywhere}.run-row p{font-size:11px}.detail-block .note{font-size:11px}
+.compact .port.in,.compact .port.out{left:50%;right:auto;transform:translateX(-50%)}.compact .port.in{top:-5px}.compact .port.out{top:auto;bottom:-5px}
+@media(max-width:1180px){.workbench{grid-template-columns:minmax(0,1fr) 258px}.workbench.with-index{grid-template-columns:176px minmax(0,1fr) 258px}}
+@media(max-width:900px){.workbench.with-index{grid-template-columns:minmax(0,1fr) 255px}.index{position:absolute;left:0;top:112px;z-index:3;width:210px;max-width:80vw;border:1px solid var(--line);box-shadow:0 7px 22px #0007}}
+@media(max-width:690px){.top{min-height:64px;padding:9px 10px;gap:8px;flex-wrap:wrap}.top-actions{max-width:100%;flex:1;justify-content:flex-end}.case-select{max-width:198px;min-width:0}.workbench,.workbench.with-index{display:block;height:auto;min-height:0}.panel{grid-template-rows:auto max(555px,70dvh)}.toolbar{padding:7px 8px;gap:6px}.toolbar .toolbar-count{display:none}.inspector{border-left:0;border-top:1px solid var(--line)}.minimap{display:none}.legend{top:8px;left:8px;gap:8px}.zoom{left:8px;bottom:8px}.node{padding-inline:6px;gap:5px;cursor:pointer}.node-icon,.node.evidence .node-icon{width:21px;height:23px}.node-icon svg{width:13px;height:13px}.root .node-icon{width:26px;height:27px}.compact-root .node-title{font-size:15px}}
+@media(max-width:358px){.case-select{max-width:167px}.import{padding-inline:7px}.legend{font-size:10px}.filters button{padding-inline:7px}}
+.compact .node.claim .node-icon{width:25px;height:27px}.compact .node.claim .node-icon svg{width:14px;height:14px}
+@media(prefers-reduced-motion:no-preference){.node,.edge{transition:border-color .12s,opacity .12s,stroke .12s}}
+.task-dialog{width:min(740px,calc(100% - 24px));max-height:calc(100dvh - 30px);padding:0;border:1px solid #4a4952;border-radius:8px;background:var(--paper);color:var(--ink);box-shadow:0 16px 60px #0009}
+.task-dialog::backdrop{background:#08080ab3}.task-head,.task-actions,.task-row-head,.task-form-footer{display:flex;align-items:center;gap:8px}.task-head{justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--line)}.task-head h2{font-size:16px}
+.task-body{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr)}.task-section{padding:16px;min-width:0}.task-section+ .task-section{border-left:1px solid var(--line)}.task-section h3{font-size:13px;margin-bottom:12px}.task-form{display:grid;gap:11px}.task-field{display:grid;gap:5px;font-size:12px}.task-field input,.task-field textarea{width:100%;min-width:0;background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:5px;padding:7px 8px;font:inherit}.task-field textarea{resize:vertical}.task-field input:focus-visible,.task-field textarea:focus-visible{outline:2px solid var(--accent);outline-offset:1px}.task-authorize{display:flex;align-items:flex-start;gap:6px;font-size:12px;color:var(--muted);line-height:1.55}.task-authorize input{accent-color:var(--accent)}
+.task-form-footer{justify-content:flex-end}.task-error{color:var(--red);font-size:12px;overflow-wrap:anywhere}.task-row{padding:9px 0;border-bottom:1px solid var(--line)}.task-row:first-child{padding-top:0}.task-row strong{min-width:0;font-size:13px;overflow-wrap:anywhere}.task-row-head{justify-content:space-between}.task-meta{font-size:12px;color:var(--muted);margin-top:4px;line-height:1.6}.task-actions{flex-wrap:wrap;margin-top:7px}.task-actions .control{padding:4px 7px;font-size:12px}.task-empty{font-size:12px;color:var(--muted)}
+@media(max-width:580px){.task-body{grid-template-columns:1fr}.task-section+ .task-section{border-left:0;border-top:1px solid var(--line)}}
+.desktop .top{min-height:51px;padding:0 0 0 13px;gap:12px;flex-wrap:nowrap}.desktop .brand-mark{width:30px;height:30px;background:#3a2928}.desktop .brand h1{font-size:14px}.desktop .top-actions{margin-left:auto;gap:6px}.desktop .top-actions .control{font-size:12px;padding:6px 9px}.desktop .case-select{max-width:190px}.window-controls{display:flex;align-self:stretch;margin-left:5px}.window-controls button{display:grid;place-items:center;width:41px;border:0;border-left:1px solid #2d2b30;background:transparent;padding:0}.window-controls button:hover{background:var(--raised)}.window-controls .window-close:hover{background:#a64338}.window-controls svg{width:14px;height:14px}
+.desktop .app-content{display:grid;grid-template-columns:196px minmax(0,1fr);height:calc(100dvh - 51px);min-height:0}.desktop .workbench,.desktop .project-view{height:100%;min-height:0}.project-sidebar{background:#171719;border-right:1px solid var(--line);min-width:0;overflow:auto;padding:14px 9px}.nav-action{display:flex;align-items:center;gap:8px;width:100%;padding:8px;border:1px solid transparent;border-radius:5px;background:none;text-align:left;font-size:13px;overflow:hidden}.nav-action svg{width:16px;height:16px;flex:none;color:var(--muted)}.nav-action span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.nav-action:hover{background:#242428}.nav-action.active{border-color:#583c36;background:#352825;color:#ffc4b5}.nav-action.active svg{color:var(--accent)}.sidebar-heading{display:flex;align-items:center;justify-content:space-between;margin:16px 3px 7px;padding-left:5px;color:var(--muted);font-size:11px}.sidebar-heading .icon-button{width:27px;height:27px}.sidebar-empty{padding:9px 8px;color:var(--muted);font-size:12px}.project-nav-list{display:grid;gap:2px}.project-view{display:grid;grid-template-columns:minmax(0,1fr) 287px;min-width:0;overflow:hidden;background:var(--canvas)}.project-main,.project-inspector{overflow:auto;min-width:0;padding:21px 21px}.project-inspector{border-left:1px solid var(--line);background:var(--paper)}.project-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding-bottom:16px;border-bottom:1px solid var(--line)}.project-top h2{font-size:21px;overflow-wrap:anywhere}.project-top p{margin-top:6px;line-height:1.5;color:var(--muted);overflow-wrap:anywhere}.project-actions{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}.project-actions .control{font-size:12px}.project-section{padding:17px 0;border-bottom:1px solid var(--line)}.project-section h3,.project-inspector h3{font-size:13px;margin-bottom:9px}.project-section p,.project-inspector p{font-size:13px;line-height:1.65;overflow-wrap:anywhere}.project-members{display:grid;gap:1px}.project-member{display:flex;align-items:center;gap:8px;padding:7px 2px;border-bottom:1px solid #2e2c31;min-width:0}.project-member:last-child{border-bottom:0}.project-member strong{font-size:13px;overflow-wrap:anywhere}.project-member svg{width:15px;height:15px;flex:none;color:var(--muted)}.member-count{margin-left:auto;color:var(--muted);font-size:11px;white-space:nowrap}.project-empty{grid-column:1/-1;display:grid;place-content:center;justify-items:center;gap:10px;padding:18px;text-align:center}.project-empty svg{width:30px;height:30px;color:var(--accent)}.project-empty h2{font-size:17px}.project-empty p{font-size:12px;color:var(--muted)}.project-findings{display:grid;gap:4px}.project-finding{display:flex;align-items:center;gap:8px;text-align:left;padding:9px;width:100%;white-space:normal}.project-finding.selected{border-color:var(--accent);background:#352825}.project-finding strong{font-size:13px;overflow-wrap:anywhere}.project-inspector .quote{margin:5px 0 9px}.project-inspector .project-evidence{padding-top:10px;margin-top:10px;border-top:1px solid var(--line)}.project-muted{color:var(--muted)}
+.project-dialog{width:min(605px,calc(100% - 22px))}.project-dialog .task-form{padding:16px}.project-field-row{display:grid;grid-template-columns:2fr 1fr;gap:8px}.picker-tools{display:flex;gap:7px;align-items:center;flex-wrap:wrap}.picker-tools input{flex:1;min-width:150px}.picker-list{height:200px;overflow:auto;border:1px solid var(--line);border-radius:5px;background:#202024;padding:3px 8px}.picker-row{display:flex;align-items:center;gap:7px;padding:7px 2px;border-bottom:1px solid var(--line);font-size:12px}.picker-row:last-child{border:0}.picker-row input{width:auto;accent-color:var(--accent)}.picker-row span:last-child{overflow-wrap:anywhere}.picker-row svg{width:14px;height:14px;flex:none;color:var(--muted)}.picker-caption{font-size:12px;color:var(--muted)}.desktop .task-form-footer .control{white-space:normal}
+@media(max-width:950px){.desktop .app-content{grid-template-columns:160px minmax(0,1fr)}.project-view{grid-template-columns:minmax(0,1fr) 232px}.project-main,.project-inspector{padding:15px 12px}}
+@media(max-width:700px){.desktop .app-content{grid-template-columns:112px minmax(0,1fr);height:auto;min-height:calc(100dvh - 51px)}.desktop .brand h1{display:none}.desktop .top-actions .control{padding:4px 5px}.desktop .case-select{max-width:105px}.window-controls button{width:28px}.project-view{display:block}.project-inspector{border-left:0;border-top:1px solid var(--line)}.project-top{flex-wrap:wrap}.project-sidebar{padding:10px 5px}}
+.desktop .library-view{display:grid;grid-template-columns:minmax(200px,27%) minmax(0,1fr);min-width:0;min-height:0;height:100%;background:var(--canvas);overflow:hidden}
+.library-sidebar,.library-content{min-width:0;overflow:auto}
+.library-sidebar{border-right:1px solid var(--line);background:var(--paper);padding:16px 12px}
+.library-content{padding:21px 24px}
+.library-heading{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:14px}
+.library-heading h2,.library-content h2{font-size:17px;overflow-wrap:anywhere}
+.library-list{display:grid;gap:3px}
+.library-row{align-items:flex-start;min-height:52px}
+.library-row svg{margin-top:2px}
+.library-row div{min-width:0;display:grid;gap:4px}
+.library-row small,.library-meta{color:var(--muted);font-size:12px}
+.library-tools{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:16px 0 10px}
+.library-tools input{flex:1;min-width:128px;padding:7px 9px;background:var(--paper);border:1px solid var(--line);border-radius:5px;color:inherit;font:inherit}
+.library-messages{border-top:1px solid var(--line)}
+.library-message{padding:12px 0;border-bottom:1px solid var(--line)}
+.library-message p:last-child{font-size:13px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;margin-top:5px}
+.library-pager{display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:14px 0}
+.library-pager button:disabled{opacity:.45}
+.library-status{margin:10px 0}
+@media(max-width:760px){.desktop .library-view{grid-template-columns:minmax(0,1fr);height:auto}.library-sidebar{border-right:0;border-bottom:1px solid var(--line)}.library-list{max-height:190px;overflow:auto}.library-content{padding:15px 12px}}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><div class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path stroke="#ff9a86" d="M4 5h13a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-5l-5 4v-4H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z"/><path stroke="#9ce8cf" d="m7 11 3-2 3 2 3-2"/><path stroke="#e3bca9" d="M21 10v6a2 2 0 0 1-2 2h-4v3l-3-3"/></svg></div><h1 id="app-title">调查链画布</h1><span id="example" class="example" hidden>虚构示例</span></div>
+  <div class="top-actions"><select id="case-select" class="case-select control" aria-label="选择调查报告"></select><button type="button" id="watch" class="icon-button watch" aria-label="跟踪本地报告" title="跟踪本地报告" aria-pressed="false" hidden></button><button type="button" id="import" class="control import">打开调查报告</button><button type="button" id="desktop-demo" class="control" hidden>查看示例</button><button type="button" id="desktop-tasks" class="control import" hidden>调查任务</button><input type="file" id="files" accept=".json,application/json" multiple hidden></div>
+  <div class="window-controls" id="window-controls" hidden><button data-window="minimize" type="button" aria-label="最小化" title="最小化"></button><button data-window="maximize" type="button" aria-label="最大化或还原" title="最大化或还原"></button><button data-window="close" type="button" class="window-close" aria-label="关闭窗口" title="关闭窗口"></button></div>
+</header>
+<p id="message" class="notice" role="alert" hidden></p>
+<div class="app-content">
+<aside class="project-sidebar" id="project-sidebar" aria-label="工作台导航" hidden>
+  <button id="project-home" type="button" class="nav-action"><span>微信项目</span></button>
+  <button id="library-home" type="button" class="nav-action"><span>会话库</span></button>
+  <button id="public-home" type="button" class="nav-action"><span>公开调查</span></button>
+  <div class="sidebar-heading"><strong>项目列表</strong><button class="icon-button" type="button" id="project-new" aria-label="新建项目" title="新建项目"></button></div>
+  <nav class="project-nav-list" id="project-list" aria-label="项目列表"></nav>
+</aside>
+<main class="workbench" id="workbench">
+  <nav class="index" id="index" aria-label="关键发现" hidden><h2 class="section-heading">关键发现</h2><div class="claim-list" id="claim-list"></div></nav>
+  <section class="panel" aria-label="证据关系图">
+    <div class="toolbar"><button type="button" class="icon-button" id="index-toggle" aria-label="发现列表" title="发现列表" aria-expanded="false" aria-controls="index"></button><div class="filters" role="group" aria-label="筛选发现"><button type="button" data-filter="all">全部发现</button><button type="button" data-filter="confirmed">原文支持</button><button type="button" data-filter="conflict">冲突</button><button type="button" data-filter="self">自述</button></div><p class="toolbar-count" id="counts"></p></div>
+    <div id="viewport" class="viewport"><div id="scene" class="scene"></div><div id="empty" class="empty" hidden><div><strong id="empty-title"></strong></div></div>
+      <div class="legend" aria-label="发现状态"><span class="key"><i></i>原文支持</span><span class="key"><i class="red-line"></i>冲突或反驳</span><span class="key"><i class="amber-line"></i>本人自述</span></div>
+      <div class="zoom"><button type="button" class="icon-button" id="minus" aria-label="缩小" title="缩小"></button><span id="zoom-value" aria-live="polite"></span><button type="button" class="icon-button" id="plus" aria-label="放大" title="放大"></button><span class="separator" aria-hidden="true"></span><button type="button" class="icon-button" id="fit" aria-label="适应画布" title="适应画布"></button><button type="button" class="icon-button" id="reset-layout" aria-label="复位节点" title="复位节点" hidden></button></div>
+      <button type="button" id="minimap" class="minimap" aria-label="画布小地图，点击定位" title="画布小地图"></button>
+    </div>
+  </section>
+  <aside class="inspector" id="inspector" aria-label="节点详情"><div class="inspector-head" id="inspector-head">节点详情</div><div class="inspector-content" id="inspector-content" aria-live="polite"></div></aside>
+</main>
+<section class="project-view" id="project-view" aria-label="微信项目" hidden></section>
+<section class="library-view" id="library-view" aria-label="会话库" hidden>
+  <aside class="library-sidebar">
+    <header class="library-heading"><h2>会话库</h2><button class="icon-button" id="library-add" type="button" aria-label="添加会话" title="添加会话"></button></header>
+    <div id="library-list" class="library-list"></div>
+  </aside>
+  <div id="library-content" class="library-content">
+    <div id="library-empty" class="project-empty"><h2>暂无已归档会话</h2></div>
+    <section id="library-detail" hidden>
+      <header class="project-top"><div><h2 id="library-name"></h2><p id="library-meta"></p></div><button id="library-sync" type="button" class="control">同步</button></header>
+      <form id="library-search" class="library-tools"><input id="library-keyword" aria-label="搜索此会话" placeholder="搜索此会话" maxlength="120"><button class="control" type="submit">搜索</button></form>
+      <div id="library-messages" class="library-messages"></div>
+      <footer class="library-pager"><button id="library-prev" type="button" class="control">上一页</button><span id="library-page" class="library-meta"></span><button id="library-next" type="button" class="control">下一页</button></footer>
+    </section>
+    <p id="library-status" class="library-status project-muted" role="status" hidden></p>
+  </div>
+</section>
+</div>
+<dialog id="project-dialog" class="task-dialog project-dialog" aria-labelledby="project-dialog-heading">
+  <div class="task-head"><h2 id="project-dialog-heading">新建项目</h2><button class="icon-button" type="button" id="project-dialog-close" aria-label="关闭项目编辑"></button></div>
+  <form class="task-form" id="project-form">
+    <div class="project-field-row" id="project-info"><label class="task-field">项目名称<input name="name" maxlength="80" required></label><label class="task-field">消息起始日<input name="since" type="date" required></label></div>
+    <label class="task-field" id="project-objective">分析目标<input name="objective" maxlength="320" required></label>
+    <div class="task-field"><label for="conversation-filter">选择微信会话</label><div class="picker-tools"><input id="conversation-filter" placeholder="搜索单聊或群聊名称" maxlength="120"><select id="conversation-kind" class="control" aria-label="会话类型"><option value="all">全部</option><option value="direct">单聊</option><option value="group">群聊</option></select><button class="icon-button" id="conversation-refresh" type="button" aria-label="刷新会话列表" title="刷新会话列表"></button></div></div>
+    <div id="conversation-picker" class="picker-list" aria-live="polite"></div><p id="conversation-count" class="picker-caption"></p><p class="picker-caption">保存后将本机可读的所选会话历史导入会话库。</p><p id="project-form-error" class="task-error" role="alert" hidden></p>
+    <div class="task-form-footer"><button id="project-save" class="control import" type="submit" disabled>保存项目</button></div>
+  </form>
+</dialog>
+<dialog id="project-consent" class="task-dialog project-dialog" aria-labelledby="project-consent-title">
+  <div class="task-head"><h2 id="project-consent-title">联合分析</h2><button class="icon-button" type="button" id="project-consent-close" aria-label="取消联合分析"></button></div>
+  <form id="project-analyze-form" class="task-form"><div id="project-scope" class="picker-caption"></div><label class="task-authorize"><input type="checkbox" required>同意将所列会话的消息样本发给当前配置的 Codex 模型。正文会按规则遮盖，部分身份和业务信息仍可能保留。</label><div class="task-form-footer"><button class="control import" type="submit">确认并分析</button></div></form>
+</dialog>
+<dialog id="task-dialog" class="task-dialog" aria-labelledby="task-heading">
+  <div class="task-head"><h2 id="task-heading">调查任务</h2><button id="task-close" type="button" class="icon-button" aria-label="关闭调查任务" title="关闭"></button></div>
+  <div class="task-body">
+    <section class="task-section"><h3>新建公开调查</h3><form class="task-form" id="task-form">
+      <label class="task-field">调查对象<input name="subject" maxlength="120" required></label>
+      <label class="task-field">核对目标<input name="objective" maxlength="240" required></label>
+      <label class="task-field">已确认的公开主页（可选）<input name="profile" type="url" maxlength="2000"></label>
+      <label class="task-field">授权的公开查询词（每行一条）<textarea name="keywords" rows="3" maxlength="2400" required></textarea></label>
+      <label class="task-authorize"><input type="checkbox" name="authorize" required>授权向公开搜索来源发送以上查询词</label>
+      <p id="task-error" class="task-error" role="alert" hidden></p>
+      <div class="task-form-footer"><button type="submit" id="task-start" class="control import">开始调查</button></div>
+    </form></section>
+    <section class="task-section"><h3>任务记录</h3><div id="task-list" aria-live="polite"></div></section>
+  </div>
+</dialog>
+<script type="application/json" id="embedded-reports">null</script>
+<script type="application/json" id="demo-report">
+{
+  "subject": "林示例",
+  "reviewed_at": "2026-11-20T14:00:00+08:00",
+  "confirmed_public_anchors": [
+    {
+      "kind": "organization",
+      "value": "示例大学"
+    },
+    {
+      "kind": "project",
+      "value": "青杉项目"
+    }
+  ],
+  "claims": [
+    {
+      "id": "school",
+      "statement": "校方确认参与青杉项目",
+      "status": "independent_primary_support",
+      "effective_date": "2025-05-22",
+      "evidence": [
+        {
+          "url": "https://university.example.org/news/team",
+          "kind": "primary",
+          "stance": "supports",
+          "evidence_id": "demo-school-1",
+          "fetched_at": "2026-11-20T13:43:00+08:00",
+          "quote": "2025 年春，示例大学青杉项目团队成员林示例参与了开放数据研究。",
+          "identity": {
+            "status": "linked",
+            "matched_anchors": [
+              {
+                "kind": "organization",
+                "value": "示例大学"
+              },
+              {
+                "kind": "project",
+                "value": "青杉项目"
+              }
+            ]
+          },
+          "discovery": {
+            "run_id": "demo-university",
+            "source": "bing",
+            "exact_url_match": true
+          }
+        },
+        {
+          "url": "https://conference.example.net/program",
+          "kind": "primary",
+          "stance": "supports",
+          "evidence_id": "demo-school-2",
+          "fetched_at": "2026-11-20T13:47:00+08:00",
+          "quote": "报告人林示例（示例大学）将介绍青杉项目的研究阶段。",
+          "identity": {
+            "status": "linked",
+            "matched_anchors": [
+              {
+                "kind": "organization",
+                "value": "示例大学"
+              },
+              {
+                "kind": "project",
+                "value": "青杉项目"
+              }
+            ]
+          },
+          "discovery": {
+            "run_id": "demo-university",
+            "source": "bing",
+            "exact_url_match": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "project",
+      "statement": "项目负责人说法有冲突",
+      "status": "conflicting",
+      "effective_date": "2026-03-01",
+      "evidence": [
+        {
+          "url": "https://journal.example.net/interview",
+          "kind": "self_report",
+          "stance": "supports",
+          "evidence_id": "demo-project-1",
+          "fetched_at": "2026-11-20T13:50:00+08:00",
+          "quote": "林示例在访谈里说，自己在示例大学负责青杉项目。",
+          "identity": {
+            "status": "linked",
+            "matched_anchors": [
+              {
+                "kind": "organization",
+                "value": "示例大学"
+              },
+              {
+                "kind": "project",
+                "value": "青杉项目"
+              }
+            ]
+          },
+          "discovery": {
+            "run_id": "demo-project",
+            "source": "sogou_wechat",
+            "exact_url_match": false
+          }
+        },
+        {
+          "url": "https://university.example.org/projects/team",
+          "kind": "primary",
+          "stance": "contradicts",
+          "evidence_id": "demo-project-2",
+          "fetched_at": "2026-11-20T13:52:00+08:00",
+          "quote": "示例大学公布的青杉项目成员名单将林示例列为研究成员，另列项目负责人。",
+          "identity": {
+            "status": "linked",
+            "matched_anchors": [
+              {
+                "kind": "organization",
+                "value": "示例大学"
+              },
+              {
+                "kind": "project",
+                "value": "青杉项目"
+              }
+            ]
+          },
+          "discovery": {
+            "run_id": "demo-project",
+            "source": "bing",
+            "exact_url_match": true
+          }
+        }
+      ],
+      "depends_on": [
+        "school"
+      ]
+    },
+    {
+      "id": "repo",
+      "statement": "青杉项目代码仓库可核实",
+      "status": "primary_support",
+      "depends_on": [
+        "school"
+      ],
+      "evidence": [
+        {
+          "url": "https://code.example.org/coral/cedar",
+          "kind": "primary",
+          "stance": "supports",
+          "evidence_id": "demo-repo-1",
+          "fetched_at": "2026-11-20T13:55:00+08:00",
+          "quote": "示例大学青杉项目公开仓库的贡献者公告中列有林示例，负责数据清理模块。",
+          "identity": {
+            "status": "linked",
+            "matched_anchors": [
+              {
+                "kind": "organization",
+                "value": "示例大学"
+              },
+              {
+                "kind": "project",
+                "value": "青杉项目"
+              }
+            ]
+          },
+          "discovery": {
+            "run_id": "demo-repo",
+            "source": "github",
+            "exact_url_match": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "interview",
+      "statement": "本人称负责数据整理",
+      "status": "self_reported",
+      "depends_on": [
+        "repo"
+      ],
+      "evidence": [
+        {
+          "url": "https://post.example.org/interview",
+          "kind": "self_report",
+          "stance": "supports",
+          "evidence_id": "demo-work-1",
+          "fetched_at": "2026-11-20T13:55:00+08:00",
+          "quote": "在青杉项目访谈里，林示例说自己在示例大学主要做数据整理。",
+          "identity": {
+            "status": "linked",
+            "matched_anchors": [
+              {
+                "kind": "organization",
+                "value": "示例大学"
+              },
+              {
+                "kind": "project",
+                "value": "青杉项目"
+              }
+            ]
+          },
+          "discovery": {
+            "run_id": "demo-interview",
+            "source": "sogou_wechat",
+            "exact_url_match": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "company",
+      "statement": "与澄川研究团队有任职关系",
+      "status": "identity_unresolved",
+      "effective_date": null,
+      "evidence": [
+        {
+          "url": "https://company.example.com/team",
+          "kind": "primary",
+          "stance": "supports",
+          "evidence_id": "demo-company-1",
+          "fetched_at": "2026-11-20T13:57:00+08:00",
+          "quote": "澄川研究团队成员一栏列有林示例，公开页面未给出项目或院校信息。",
+          "identity": {
+            "status": "same_name_candidate",
+            "matched_anchors": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "account",
+      "statement": "某公开账号由本人运营",
+      "status": "unverified",
+      "effective_date": null,
+      "evidence": []
+    }
+  ],
+  "search_runs": [
+    {
+      "run_id": "demo-university",
+      "query": "林示例 示例大学 青杉项目",
+      "queried_at": "2026-11-20T13:41:00+08:00",
+      "status": "ok",
+      "candidate_count": 4,
+      "sources": [
+        {
+          "name": "bing",
+          "status": "ok",
+          "candidate_count": 3
+        },
+        {
+          "name": "openalex",
+          "status": "ok",
+          "candidate_count": 1
+        }
+      ]
+    },
+    {
+      "run_id": "demo-project",
+      "query": "林示例 青杉项目 负责人",
+      "queried_at": "2026-11-20T13:46:00+08:00",
+      "status": "ok",
+      "candidate_count": 5,
+      "sources": [
+        {
+          "name": "sogou_wechat",
+          "status": "ok",
+          "candidate_count": 2
+        },
+        {
+          "name": "bing",
+          "status": "ok",
+          "candidate_count": 3
+        }
+      ]
+    },
+    {
+      "run_id": "demo-repo",
+      "query": "青杉项目 开源仓库",
+      "queried_at": "2026-11-20T13:51:00+08:00",
+      "status": "ok",
+      "candidate_count": 2,
+      "sources": [
+        {
+          "name": "github",
+          "status": "ok",
+          "candidate_count": 2
+        }
+      ]
+    },
+    {
+      "run_id": "demo-interview",
+      "query": "林示例 青杉项目 数据整理",
+      "queried_at": "2026-11-20T13:56:00+08:00",
+      "status": "ok",
+      "candidate_count": 1,
+      "sources": [
+        {
+          "name": "sogou_wechat",
+          "status": "ok",
+          "candidate_count": 1
+        }
+      ]
+    },
+    {
+      "run_id": "demo-unresolved",
+      "query": "林示例 澄川研究团队",
+      "queried_at": "2026-11-20T13:58:00+08:00",
+      "status": "partial",
+      "candidate_count": 0,
+      "sources": [
+        {
+          "name": "bing",
+          "status": "ok",
+          "candidate_count": 0
+        },
+        {
+          "name": "wikipedia",
+          "status": "unavailable",
+          "candidate_count": 0
+        }
+      ]
+    }
+  ]
+}
+</script>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const statuses = {
+  independent_primary_support:['独立佐证','green'],primary_support:['原文支持','green'],
+  conflicting:['存在冲突','red'],primary_contradiction:['原文反驳','red'],
+  self_reported:['本人自述','amber'],linked_unverified:['已关联 · 待核','amber'],
+  identity_unresolved:['身份待核','grey'],unverified:['证据不足','grey']
+};
+const kinds = {primary:'第一方原文',self_report:'本人自述',secondary:'二手报道',reprint:'转载'};
+const identityLabels = {linked:'已关联',same_name_candidate:'同名候选',context_only:'仅背景'};
+const anchorLabels = {organization:'机构',project:'项目',role:'角色',date:'日期',profile_url:'公开主页'};
+const demo = JSON.parse($('demo-report').textContent);
+const embedded = JSON.parse($('embedded-reports').textContent);
+const desktopBridge = location.origin==='https://canvas.wechat-research.local' ? window.chrome?.webview : null;
+const emptyReport={subject:'暂无调查报告',claims:[]};
+let desktopReports=[];
+let reports = desktopBridge ? [emptyReport] : embedded ?? [demo];
+let caseIndex = 0;
+let filter = 'all';
+let selection = {type:'root'};
+let geometry = {width:920,height:490};
+let compact = false;
+let camera = {x:0,y:0,zoom:1};
+let drag = null;
+const positions = new WeakMap();
+let boxes = [];
+let mapView;
+let suppressNodeClick = false;
+let watchedFolder=null;
+let watchTimer;
+let watchEntries=new Map();
+const view = $('viewport');
+
+const iconPaths = {
+  user:'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2 M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z',
+  list:'M9 6h11 M9 12h11 M9 18h11 M4 6h.01 M4 12h.01 M4 18h.01',
+  file:'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z M14 2v6h6 M8 13h8 M8 17h6',
+  check:'m5 12 4 4L19 6', question:'M9.09 9a3 3 0 1 1 5.83 1c-1 1.5-2.92 2-2.92 4 M12 17h.01',
+  alert:'M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z M12 9v4 M12 17h.01',
+  quote:'M3 21c3 0 7-3 7-10V5H3v8h5 M14 21c3 0 7-3 7-10V5h-7v8h5',
+  plus:'M5 12h14 M12 5v14',minus:'M5 12h14',
+  fit:'M8 3H5a2 2 0 0 0-2 2v3 M16 3h3a2 2 0 0 1 2 2v3 M21 16v3a2 2 0 0 1-2 2h-3 M8 21H5a2 2 0 0 1-2-2v-3',
+  reset:'M3 12a9 9 0 1 0 2.74-6.48L3 8 M3 3v5h5',
+  watch:'M2 12h4l3-7 4 14 3-7h6',
+  close:'m6 6 12 12 M18 6 6 18',
+  tasks:'M9 5H6a2 2 0 0 0-2 2v13h16V7a2 2 0 0 0-2-2h-3 M9 3h6v4H9z M8 12l2 2 4-4 M8 18h8',
+  chats:'M20 12a4 4 0 0 1-4 4H9l-5 4v-5a4 4 0 0 1-2-3.5V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z M7 9h8',
+  group:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0 M22 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75',
+  globe:'M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0Z M2 12h20 M12 2c5 5 5 15 0 20-5-5-5-15 0-20Z',
+  maximize:'M5 5h14v14H5z',
+  open:'M20 20H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v1 M2 18l3-7h17l-3 7',
+  panel:'M3 4h18v16H3z M15 4v16',
+};
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+function svg(tag, attributes) {
+  const node = document.createElementNS('http://www.w3.org/2000/svg',tag);
+  for (const [key,value] of Object.entries(attributes)) node.setAttribute(key,value);
+  return node;
+}
+function icon(name) {
+  const image=svg('svg',{viewBox:'0 0 24 24',fill:'none',stroke:'currentColor','stroke-width':1.75,
+                         'stroke-linecap':'round','stroke-linejoin':'round','aria-hidden':'true'});
+  image.append(svg('path',{d:iconPaths[name]}));
+  return image;
+}
+function button(className, label, action) {
+  const node = el('button',className,label);
+  node.type = 'button';
+  node.addEventListener('click',action);
+  return node;
+}
+function statusOf(claim) { return statuses[claim.status] ?? ['待核','grey']; }
+function badge([label,tone]) { return el('span','badge '+tone,label); }
+function safeLink(value) {
+  try {
+    const url = new URL(value);
+    return ['http:','https:'].includes(url.protocol) && !url.username && !url.password ? url : null;
+  } catch { return null; }
+}
+function hostname(value) { return safeLink(value)?.hostname ?? '来源地址不可用'; }
+function dateLabel(value) { return typeof value === 'string' ? value.slice(0,10) : ''; }
+function evidenceStatus(evidence) {
+  if (evidence.identity?.status !== 'linked') return [identityLabels[evidence.identity?.status] ?? '身份待核','context'];
+  if (evidence.stance === 'contradicts') return ['反驳','red'];
+  if (evidence.stance === 'supports') return ['支持','green'];
+  return ['背景','context'];
+}
+function isFinding(claim) {
+  return claim.key_finding !== false &&
+    ['independent_primary_support','primary_support','primary_contradiction','conflicting','self_reported'].includes(claim.status) &&
+    claim.evidence.some(row => row.identity?.status === 'linked');
+}
+function visibleClaims() {
+  return reports[caseIndex].claims.filter(claim => {
+    if (!isFinding(claim)) return false;
+    if (filter==='confirmed') return ['independent_primary_support','primary_support'].includes(claim.status);
+    if (filter==='conflict') return ['conflicting','primary_contradiction'].includes(claim.status);
+    if (filter==='self') return claim.status==='self_reported';
+    return true;
+  });
+}
+function isActive(claim) { return selection.claim===claim.id; }
+function pick(next, focusKey) {
+  selection=next;
+  renderGraph(); renderList(); renderDetails();
+  if (focusKey) Array.from(document.querySelectorAll('[data-focus]')).find(node=>node.dataset.focus===focusKey)?.focus({preventScroll:true});
+}
+function placeNode(container, box, content, className, next, key, label, branches) {
+  const node=button('node '+className,undefined,()=>{if (!suppressNodeClick) pick(next,key);});
+  Object.assign(node.style,{left:box.x+'px',top:box.y+'px',width:box.w+'px',height:box.h+'px'});
+  node.dataset.focus=key;
+  node.setAttribute('aria-label',label);
+  node.setAttribute('aria-pressed',String(next.type===selection.type && next.claim===selection.claim));
+  const [symbol,...labels]=content;
+  const sign=el('span','node-icon'); sign.append(icon(symbol));
+  const caption=el('span','node-caption'); caption.append(...labels);
+  node.append(sign,caption);
+  if (next.type!=='root') node.append(el('span','port in'));
+  if (branches) node.append(el('span','port out'));
+  container.append(node);
+  boxes.push({...box,key,type:next.type,tone:className.split(' ').find(tone=>['green','red','amber'].includes(tone))??''});
+}
+function connect(edges, from, to, tone, emphasis) {
+  const start=compact?[from.x+from.w/2,from.y+from.h]:[from.x+from.w,from.y+from.h/2];
+  const end=compact?[to.x+to.w/2,to.y]:[to.x,to.y+to.h/2];
+  const [x,y]=start, [a,b]=end;
+  const reach=compact?Math.max(19,(b-y)/2):a>x?Math.min(155,(a-x)*.55):65;
+  const controls=compact?[x,y+reach,a,b-reach]:[x+reach,y,a-reach,b];
+  const path='M '+start.join(' ')+' C '+controls.join(' ')+' '+end.join(' ');
+  edges.append(svg('path',{class:'edge '+tone+' '+emphasis,d:path}));
+}
+function renderGraph() {
+  const scene=$('scene'), report=reports[caseIndex], claims=visibleClaims();
+  scene.replaceChildren();
+  boxes=[];
+  $('empty').hidden=claims.length>0;
+  $('empty-title').textContent=report===emptyReport?'暂无调查报告':report.claims.some(isFinding)?'当前筛选下没有发现':'尚无关键发现';
+  const edges=svg('svg',{class:'edges','aria-hidden':'true'});
+  scene.append(edges);
+  const root={key:'root',rank:0,parents:[]};
+  const layouts=new Map([['root',root]]);
+  const previous=new Map();
+  const visible=new Set(claims);
+  for (const claim of report.claims) {
+    const parents=[...new Set((claim.depends_on??[]).flatMap(id=>previous.get(id)??[]))];
+    if (!visible.has(claim)) {
+      previous.set(claim.id,parents);
+      continue;
+    }
+    const links=parents.length?parents:['root'];
+    const rank=1+Math.max(...links.map(key=>layouts.get(key).rank));
+    const key='claim:'+claim.id;
+    previous.set(claim.id,[key]);
+    layouts.set(key,{key,claim,rank,parents:links});
+  }
+  const columns=[];
+  for (const box of layouts.values()) (columns[box.rank]??=[]).push(box);
+  const maxRows=Math.max(...columns.map(column=>column.length));
+  const width=compact?370:Math.max(850,columns.length*265+48);
+  const height=compact ? 114+columns.reduce((n,column)=>n+Math.ceil(column.length/2)*91+39,0)
+                       : Math.max(460,maxRows*109+92);
+  geometry={width,height};
+  Object.assign(scene.style,{width:width+'px',height:height+'px'});
+  edges.setAttribute('width',width);edges.setAttribute('height',height);
+  const offsets=positions.get(report);
+  let top=39;
+  for (const [rank,column] of columns.entries()) {
+    column.forEach((box,index)=>{
+      box.w=compact?161:rank===0?176:218;
+      box.h=rank===0?65:76;
+      if (compact) {
+        const count=Math.min(2,column.length-Math.floor(index/2)*2);
+        box.x=count===1?(width-box.w)/2:index%2===0?13:196;
+        box.y=top+Math.floor(index/2)*91;
+      } else {
+        box.x=37+rank*265;
+        box.y=(height-column.length*109)/2+index*109+16;
+      }
+      const point=compact?null:offsets?.get(box.key);
+      if (point) {
+        box.x=Math.max(10,Math.min(point.x,width-box.w-10));
+        box.y=Math.max(20,Math.min(point.y,height-box.h-8));
+      }
+    });
+    top+=Math.ceil(column.length/2)*91+39;
+  }
+  const selectedPath=new Set();
+  const pending=selection.claim?['claim:'+selection.claim]:[];
+  while (pending.length) {
+    const key=pending.pop();
+    if (selectedPath.has(key)) continue;
+    selectedPath.add(key);
+    pending.push(...(layouts.get(key)?.parents??[]));
+  }
+  const hasChildren=new Set([...layouts.values()].flatMap(box=>box.parents));
+  const showAll=selection.type==='root';
+  if (claims.length) {
+    placeNode(scene,root,['user',el('span','node-title',report.subject),el('span','sub','调查起点')],
+      'root'+(compact?' compact-root':'')+(showAll?' chosen':''),{type:'root'},'root',report.subject,true);
+  }
+  for (const box of layouts.values()) {
+    if (!box.claim) continue;
+    const claim=box.claim,status=statusOf(claim),tone=status[1];
+    const symbol={green:'check',red:'alert',amber:'quote',grey:'question'}[tone];
+    const active=isActive(claim), onPath=selectedPath.has(box.key);
+    for (const upstream of box.parents) connect(edges,layouts.get(upstream),box,tone,onPath?'lit':showAll?'':'dim');
+    placeNode(scene,box,[symbol,el('span','node-title',claim.statement),badge(status)],
+      'claim '+tone+(active?' chosen':'')+(!onPath&&!showAll?' dim':''),
+      {type:'claim',claim:claim.id},box.key,claim.statement+'，'+status[0],hasChildren.has(box.key));
+  }
+  $('reset-layout').hidden=compact||!offsets?.size;
+  renderMinimap();
+  applyCamera();
+}
+function renderList() {
+  const report=reports[caseIndex], list=$('claim-list'); list.replaceChildren();
+  const total=report.claims.filter(isFinding).length;
+  const runs=report.search_runs?.length??0;
+  $('counts').textContent=runs?`${total} 项发现 · ${runs} 次搜索`:`${total} 项发现`;
+  for (const claim of visibleClaims()) {
+    const key='list-'+claim.id;
+    const node=button('list-item'+(isActive(claim)?' active':''),undefined,()=>pick({type:'claim',claim:claim.id},key));
+    node.dataset.focus=key;
+    node.append(el('span','dot '+statusOf(claim)[1]),el('span','',claim.statement));
+    list.append(node);
+  }
+}
+function detail(parent,title,...children) {
+  const block=el('section','detail-block'); block.append(el('h3','',title),...children); parent.append(block);
+}
+function anchorsList(anchors) {
+  const list=el('ul','anchors');
+  for (const anchor of anchors) list.append(el('li','',`${anchorLabels[anchor.kind]??'线索'} · ${anchor.value}`));
+  return list;
+}
+const sourceNames={sogou_wechat:'搜狗微信',bing:'Bing',ddg:'DuckDuckGo',openalex:'OpenAlex',openalex_authors:'OpenAlex 作者',ror:'ROR',gleif:'GLEIF',crossref:'Crossref',github:'GitHub',wikipedia:'Wikipedia',bluesky:'Bluesky',searxng:'SearXNG'};
+const runStates={ok:'完成',cached:'缓存',partial:'部分完成',stale_cache:'旧缓存',unavailable:'不可用',not_configured:'未配置'};
+function sourceName(value) { return sourceNames[value]??value??'来源'; }
+function timeLabel(value) { return (value??'').replace('T',' ').replace(/:00(?=[+-])|\+08:00$/g,''); }
+function sourceCard(row, report, open=false) {
+  const card=el('details','source-row');
+  card.open=open;
+  const [stance]=evidenceStatus(row);
+  card.append(el('summary','',stance+' · '+hostname(row.url)));
+  card.append(el('blockquote','quote',row.quote||'无可用摘录'));
+  const anchors=row.identity?.matched_anchors??[];
+  card.append(el('p','',[(kinds[row.kind]??'公开来源'),identityLabels[row.identity?.status]??'身份待核',
+                        ...anchors.map(anchor=>anchor.value)].join(' · ')));
+  if (row.discovery) {
+    card.append(el('p','',sourceName(row.discovery.source)+(row.discovery.exact_url_match?'直接找到原文':'发现线索后追溯到原文')));
+  }
+  const url=safeLink(row.url);
+  if (url && report!==demo) {
+    const link=el('a','','查看原文');link.href=url.href;link.target='_blank';link.rel='noopener noreferrer';card.append(link);
+  }
+  if (row.origin_url && row.origin_url!==row.url) card.append(el('p','','声明的原出处 '+row.origin_url));
+  card.append(el('p','note',[row.evidence_id,timeLabel(row.fetched_at)].filter(Boolean).join(' · ')));
+  return card;
+}
+function renderRuns(body,runs,emptyLabel) {
+  if (!runs.length) {
+    detail(body,'搜索调用',el('p','',emptyLabel));
+    return;
+  }
+  const list=el('div','run-list');
+  for (const run of runs) {
+    const row=el('div','run-row');
+    const summary=(run.sources??[]).map(source=>sourceName(source.name)+' '+(runStates[source.status]??source.status??'')).join('、');
+    row.append(el('strong','',run.query),el('p','',summary),
+               el('p','',[timeLabel(run.queried_at),Number(run.candidate_count)+' 条候选'].filter(Boolean).join(' · ')));
+    list.append(row);
+  }
+  detail(body,'搜索调用',list);
+}
+function renderDetails() {
+  const parent=$('inspector-content'),report=reports[caseIndex];parent.replaceChildren();
+  const claim=report.claims.find(item=>item.id===selection.claim && isFinding(item));
+  parent.append(el('p','label',claim?'关键发现':'调查记录'),el('h2','',claim?.statement??report.subject));
+  const body=el('div','details');parent.append(body);
+  if (report===emptyReport) return;
+  const runs=report.search_runs??[];
+  if (claim) {
+    body.append(badge(statusOf(claim)));
+    const sources=el('div','source-rows');
+    claim.evidence.forEach((row,index)=>sources.append(sourceCard(row,report,index===0)));
+    detail(body,'来源证据',sources);
+    const associated=new Set(claim.evidence.map(row=>row.discovery?.run_id).filter(Boolean));
+    renderRuns(body,runs.filter(run=>associated.has(run.run_id)),'此发现未关联搜索调用');
+    return;
+  }
+  const anchors=report.confirmed_public_anchors??[];
+  if (anchors.length) detail(body,'已确认的公开线索',anchorsList(anchors));
+  renderRuns(body,runs,'此报告没有搜索调用记录');
+  const pending=report.claims.filter(item=>!isFinding(item));
+  if (pending.length) {
+    const items=el('div','source-rows');
+    for (const item of pending) {
+      const row=el('details','source-row');
+      row.append(el('summary','',item.statement),el('p','',statusOf(item)[0]));
+      for (const source of item.evidence) row.append(el('p','',hostname(source.url)+' · '+evidenceStatus(source)[0]));
+      items.append(row);
+    }
+    detail(body,'待核线索',items);
+  }
+}
+function renderMinimap() {
+  const map=$('minimap');
+  map.hidden=compact;
+  if (compact) {mapView=null;return;}
+  const surface=svg('svg',{viewBox:`0 0 ${geometry.width} ${geometry.height}`,preserveAspectRatio:'none','aria-hidden':'true'});
+  for (const box of boxes) surface.append(svg('rect',{x:box.x,y:box.y,width:box.w,height:box.h,rx:8,
+    class:'map-node map-'+(box.type==='root'?'root':box.tone)}));
+  mapView=svg('rect',{class:'map-window',rx:2,'vector-effect':'non-scaling-stroke'});
+  surface.append(mapView);
+  map.replaceChildren(surface);
+}
+function applyCamera() {
+  $('scene').style.transform=`translate(${camera.x}px,${camera.y}px) scale(${camera.zoom})`;
+  $('zoom-value').textContent=Math.round(camera.zoom*100)+'%';
+  if (mapView) {
+    const x=Math.max(0,-camera.x/camera.zoom),y=Math.max(0,-camera.y/camera.zoom);
+    const right=Math.min(geometry.width,(view.clientWidth-camera.x)/camera.zoom);
+    const bottom=Math.min(geometry.height,(view.clientHeight-camera.y)/camera.zoom);
+    for (const [key,value] of Object.entries({x,y,width:Math.max(0,right-x),height:Math.max(0,bottom-y)})) mapView.setAttribute(key,value);
+  }
+}
+function fit() {
+  const pad=view.clientWidth<500?12:28;
+  const top=48,bottom=51;
+  camera.zoom=Math.max(.04,Math.min(1.13,(view.clientWidth-pad*2)/geometry.width,(view.clientHeight-top-bottom)/geometry.height));
+  camera.x=(view.clientWidth-geometry.width*camera.zoom)/2;
+  camera.y=top+(view.clientHeight-top-bottom-geometry.height*camera.zoom)/2;
+  applyCamera();
+}
+function zoom(factor,x=view.clientWidth/2,y=view.clientHeight/2) {
+  const next=Math.max(Math.min(.15,camera.zoom),Math.min(2,camera.zoom*factor));
+  camera.x=x-(x-camera.x)*next/camera.zoom;
+  camera.y=y-(y-camera.y)*next/camera.zoom;
+  camera.zoom=next; applyCamera();
+}
+function renderCase() {
+  compact=view.clientWidth<575;
+  view.classList.toggle('compact',compact);
+  $('example').hidden=reports[caseIndex]!==demo;
+  for (const node of document.querySelectorAll('[data-filter]')) node.setAttribute('aria-pressed',String(node.dataset.filter===filter));
+  renderGraph(); renderList(); renderDetails(); fit();
+}
+function setOptions() {
+  const select=$('case-select'); select.replaceChildren();
+  reports.forEach((report,index)=>{
+    const option=el('option','',[report.subject,dateLabel(report.reviewed_at)].filter(Boolean).join(' · '));
+    option.value=index; select.append(option);
+  });
+  select.value=caseIndex;
+  select.disabled=reports[caseIndex]===emptyReport;
+}
+function reportValid(report) {
+  return typeof report?.subject==='string'&&report.subject.trim()&&Array.isArray(report.claims)
+    &&report.claims.every(claim=>typeof claim?.id==='string'&&typeof claim.statement==='string'
+      &&(claim.depends_on===undefined||Array.isArray(claim.depends_on)&&claim.depends_on.every(id=>typeof id==='string'))
+      &&Array.isArray(claim.evidence)&&claim.evidence.every(row=>row&&typeof row.url==='string'
+        &&(row.identity?.matched_anchors===undefined||validAnchors(row.identity.matched_anchors))))
+    &&(report.confirmed_public_anchors===undefined||validAnchors(report.confirmed_public_anchors))
+    &&(report.search_runs===undefined||Array.isArray(report.search_runs)&&report.search_runs.every(run=>
+      typeof run?.run_id==='string'&&typeof run.query==='string'&&typeof run.queried_at==='string'
+      &&Array.isArray(run.sources)&&run.sources.every(source=>typeof source?.name==='string')))
+    && new Set(report.claims.map(claim=>claim.id)).size===report.claims.length;
+}
+function validAnchors(anchors) {
+  return Array.isArray(anchors)&&anchors.every(anchor=>typeof anchor?.value==='string'&&typeof anchor.kind==='string');
+}
+function replaceReports(updated) {
+  const current=reports[caseIndex];
+  reports=updated;
+  const same=reports.findIndex(report=>report===current||current.investigation_id&&report.investigation_id===current.investigation_id);
+  caseIndex=Math.max(0,same);
+  if (same<0) {filter='all';selection={type:'root'};}
+  if (!visibleClaims().some(isActive)) selection={type:'root'};
+  if (same>=0 && positions.has(current)) positions.set(reports[caseIndex],positions.get(current));
+  setOptions();renderCase();
+}
+function watchStatus(active) {
+  const label=active?'停止跟踪本地报告':'跟踪本地报告';
+  $('watch').setAttribute('aria-pressed',String(active));
+  $('watch').setAttribute('aria-label',label);
+  $('watch').title=label;
+}
+function stopWatch() {
+  watchedFolder=null;
+  clearTimeout(watchTimer);
+  watchEntries=new Map();
+  watchStatus(false);
+}
+async function scanFolder(folder) {
+  try {
+    const next=new Map();
+    for await (const entry of folder.values()) {
+      if (entry.kind!=='file'||!entry.name.endsWith('.json')) continue;
+      const file=await entry.getFile();
+      const previous=watchEntries.get(entry.name);
+      if (previous?.modified===file.lastModified && previous.size===file.size) {
+        next.set(entry.name,previous);
+        continue;
+      }
+      let report;
+      try { report=JSON.parse((await file.text()).replace(/^\uFEFF/,'')); }
+      catch (error) { if (error instanceof SyntaxError) continue; throw error; }
+      if (reportValid(report)) next.set(entry.name,{report,modified:file.lastModified,size:file.size});
+    }
+    if (watchedFolder!==folder) return;
+    const changed=next.size!==watchEntries.size||[...next].some(([name,value])=>watchEntries.get(name)!==value);
+    watchEntries=next;
+    if (changed && next.size) {
+      const latest=new Map();
+      for (const [name,entry] of [...next].sort((a,b)=>b[1].modified-a[1].modified)) {
+        const key=entry.report.investigation_id??name;
+        if (!latest.has(key)) latest.set(key,entry.report);
+      }
+      replaceReports([...latest.values()]);
+    }
+    if (!next.size) {
+      $('message').textContent='当前目录没有可用的调查报告';$('message').hidden=false;
+    } else {
+      $('message').hidden=true;
+    }
+    watchTimer=setTimeout(()=>scanFolder(folder),2500);
+  } catch {
+    if (watchedFolder!==folder) return;
+    stopWatch();
+    $('message').textContent='无法读取所选调查目录';$('message').hidden=false;
+  }
+}
+$('watch').hidden=Boolean(desktopBridge)||typeof window.showDirectoryPicker!=='function';
+$('watch').addEventListener('click',async()=>{
+  if (watchedFolder) {stopWatch();$('message').hidden=true;return;}
+  try {
+    const folder=await window.showDirectoryPicker({mode:'read'});
+    watchedFolder=folder;
+    watchStatus(true);
+    await scanFolder(folder);
+  } catch (error) {
+    if (error.name!=='AbortError') {
+      $('message').textContent='浏览器无法授权读取该目录';$('message').hidden=false;
+    }
+  }
+});
+document.querySelector('.filters').addEventListener('click',event=>{
+  const next=event.target.closest('[data-filter]')?.dataset.filter;
+  if (!next) return;
+  filter=next;
+  if (!visibleClaims().some(isActive)) selection={type:'root'};
+  renderCase();
+});
+$('case-select').addEventListener('change',event=>{caseIndex=Number(event.target.value);filter='all';selection={type:'root'};renderCase();});
+$('import').addEventListener('click',()=>$('files').click());
+$('files').addEventListener('change',async event=>{
+  const chosen=Array.from(event.target.files); event.target.value='';
+  if (!chosen.length) return;
+  const imported=[], failed=[];
+  for (const file of chosen) {
+    try {
+      const data=JSON.parse((await file.text()).replace(/^\uFEFF/,''));
+      if (!reportValid(data)) throw new Error('invalid report');
+      imported.push(data);
+    } catch { failed.push(file.name); }
+  }
+  $('message').hidden=!failed.length;
+  $('message').textContent=failed.length?'无法读取调查报告：'+failed.join('、'):'';
+  if (imported.length) {stopWatch();reports=imported;caseIndex=0;filter='all';selection={type:'root'};setOptions();renderCase();}
+});
+$('minus').addEventListener('click',()=>zoom(1/1.2)); $('plus').addEventListener('click',()=>zoom(1.2)); $('fit').addEventListener('click',fit);
+$('index-toggle').addEventListener('click',event=>{
+  const toggle=event.currentTarget;
+  $('index').hidden=!$('index').hidden;
+  $('workbench').classList.toggle('with-index',!$('index').hidden);
+  toggle.setAttribute('aria-expanded',String(!$('index').hidden));
+});
+$('reset-layout').addEventListener('click',()=>{positions.delete(reports[caseIndex]);renderGraph();fit();$('fit').focus();});
+$('minimap').addEventListener('click',event=>{
+  const rect=event.currentTarget.firstElementChild.getBoundingClientRect();
+  const x=event.detail?(event.clientX-rect.left)/rect.width:.5;
+  const y=event.detail?(event.clientY-rect.top)/rect.height:.5;
+  camera.zoom=Math.max(1.22,camera.zoom);
+  camera.x=view.clientWidth/2-x*geometry.width*camera.zoom;
+  camera.y=view.clientHeight/2-y*geometry.height*camera.zoom;
+  applyCamera();
+});
+view.addEventListener('wheel',event=>{
+  if (!event.ctrlKey&&!event.metaKey) return;
+  event.preventDefault(); const bounds=view.getBoundingClientRect();
+  zoom(Math.exp(-event.deltaY*.002),event.clientX-bounds.left,event.clientY-bounds.top);
+},{passive:false});
+view.addEventListener('pointerdown',event=>{
+  if (event.button!==0) return;
+  const target=event.target.closest('button');
+  if (target) {
+    if (compact||!target.classList.contains('node')) return;
+    const box=boxes.find(item=>item.key===target.dataset.focus);
+    if (!box) return;
+    drag={mode:'node',box,x:event.clientX,y:event.clientY,started:false,pointer:event.pointerId};
+    return;
+  }
+  if (event.target.closest('.zoom,.legend')) return;
+  drag={mode:'pan',x:event.clientX-camera.x,y:event.clientY-camera.y,pointer:event.pointerId};
+  view.setPointerCapture(event.pointerId); view.classList.add('panning');
+});
+view.addEventListener('pointermove',event=>{
+  if (!drag||drag.pointer!==event.pointerId) return;
+  if (drag.mode==='pan') {
+    camera.x=event.clientX-drag.x;camera.y=event.clientY-drag.y;applyCamera();
+    return;
+  }
+  const dx=event.clientX-drag.x,dy=event.clientY-drag.y;
+  if (!drag.started) {
+    if (Math.hypot(dx,dy)<5) return;
+    drag.started=true; suppressNodeClick=true;
+    view.setPointerCapture(event.pointerId); view.classList.add('moving');
+  }
+  const report=reports[caseIndex];
+  let layout=positions.get(report);
+  if (!layout) {layout=new Map();positions.set(report,layout);}
+  layout.set(drag.box.key,{x:drag.box.x+dx/camera.zoom,y:drag.box.y+dy/camera.zoom});
+  renderGraph();
+});
+function finishDrag(event) {
+  if (drag?.pointer!==event.pointerId) return;
+  drag=null; view.classList.remove('panning','moving');
+  window.setTimeout(()=>{suppressNodeClick=false;},0);
+}
+view.addEventListener('lostpointercapture',finishDrag);
+window.addEventListener('pointerup',finishDrag);
+window.addEventListener('pointercancel',finishDrag);
+for (const [id,name] of Object.entries({'index-toggle':'list','minus':'minus','plus':'plus','fit':'fit','reset-layout':'reset','import':'open','inspector-head':'panel','watch':'watch'})) $(id).prepend(icon(name));
+if (!Array.isArray(reports)||!reports.length||!reports.every(reportValid)) reports=[demo];
+setOptions();renderCase();
+if (desktopBridge) {
+  $('import').hidden=true;
+  const demoButton=$('desktop-demo');
+  const taskDialog=$('task-dialog');
+  const taskButton=$('desktop-tasks');
+  taskButton.hidden=false;
+  taskButton.prepend(icon('tasks'));
+  $('task-close').append(icon('close'));
+  $('task-close').addEventListener('click',()=>taskDialog.close());
+  taskButton.addEventListener('click',()=>taskDialog.showModal());
+  $('task-form').addEventListener('submit',event=>{
+    event.preventDefault();
+    const fields=new FormData(event.currentTarget);
+    const request={subject:fields.get('subject'),objective:fields.get('objective'),profile_url:fields.get('profile'),
+      keywords:fields.get('keywords').split(/\r?\n/).map(value=>value.trim()).filter(Boolean),
+      public_search_authorized:fields.get('authorize')==='on'};
+    $('task-start').disabled=true;
+    $('task-error').hidden=true;
+    desktopBridge.postMessage({type:'task.create',request});
+  });
+  demoButton.hidden=false;
+  demoButton.addEventListener('click',()=>{
+    const showingDemo=reports[caseIndex]===demo;
+    replaceReports(showingDemo?(desktopReports.length?desktopReports:[emptyReport]):[demo]);
+    demoButton.textContent=showingDemo?'查看示例':'返回调查';
+  });
+  desktopBridge.addEventListener('message',event=>{
+    const message=event.data;
+    if (message?.type==='reports'&&Array.isArray(message.reports)) {
+      desktopReports=message.reports.filter(reportValid);
+      if (reports[caseIndex]!==demo||desktopReports.length) {
+        replaceReports(desktopReports.length?desktopReports:[emptyReport]);
+        demoButton.textContent='查看示例';
+      }
+      $('message').hidden=true;
+    } else if (message?.type==='status'&&typeof message.message==='string') {
+      $('message').textContent=message.message;
+      $('message').hidden=false;
+    } else if (message?.type==='tasks'&&Array.isArray(message.tasks)) {
+      renderTasks(message.tasks);
+    } else if (message?.type==='task.accepted') {
+      $('task-form').reset();
+      $('task-start').disabled=false;
+    } else if (message?.type==='task.error') {
+      $('task-error').textContent=taskErrors[message.code]??'任务操作失败，请查看任务记录。';
+      $('task-error').hidden=false;
+      $('task-start').disabled=false;
+    } else if (message?.type==='projects'&&Array.isArray(message.projects)) {
+      receiveProjects(message.projects);
+    } else if (message?.type?.startsWith('project.')) {
+      projectResult(message.type,message.result);
+    } else if (message?.type?.startsWith('library.')) {
+      libraryResult(message);
+    }
+  });
+  desktopBridge.postMessage('ready');
+}
+let projects=[];
+let activeProject=null;
+let projectMode='projects';
+let libraryConversations=[];
+let librarySelected='';
+let libraryQuery='';
+let libraryPage=0;
+let libraryToken=0;
+let libraryListPending=false;
+let libraryPicker=false;
+let libraryOperations=0;
+let picker=[];
+let pickerStatus='idle';
+let pickerCacheTime='';
+let picked=new Set();
+let editProject=null;
+let consentProject=null;
+let selectedFinding=0;
+const projectErrors={project_contacts_unavailable:'微信读取器没有返回可用的会话目录。',reader_command_failed:'微信读取器执行命令失败。',
+ reader_unavailable_or_timeout:'上次读取器启动或响应失败，可重新运行联合分析。',
+ reader_executable_not_found:'找不到微信读取器程序，请检查安装路径。',reader_launch_access_denied:'当前 Windows 用户无法启动微信读取器。',
+ reader_launch_failed:'Windows 未能启动微信读取器。',reader_timeout:'微信读取器响应超时，请重试。',
+ reader_invalid_encoding:'微信读取器返回的文字编码无法识别。',reader_invalid_json:'微信读取器返回的数据格式无效。',
+ reader_data_missing:'微信读取器没有返回会话数据。',missing_local_file:'找不到微信资料目录里的读取器配置。',
+ invalid_local_json:'本机微信读取器配置无法解析。',task_runtime_missing:'工作台找不到 Python 或本机调查工具。',
+ project_directory_access_denied:'工作台没有权限读取本机微信资料目录。',
+ project_operation_failed:'读取微信资料时发生本地错误。',task_operation_failed:'工作台未能取得本机调查工具的返回结果。',
+ reader_account_mismatch:'微信账号与资料目录的配置不同。',invalid_project_start_date:'请选择今天或更早的日期。',
+ project_codex_failed:'Codex 未能完成本次审阅。',project_review_too_large:'会话样本较大，请拆分为较小的项目。',
+ select_one_to_twenty_conversations:'每个项目可选择 1 至 20 个会话。',project_changed_reload_sources:'项目来源已更新，请重新确认。',
+ task_already_running:'该项目正在分析，完成后可编辑。',project_start_date_is_fixed:'要更改起始日，请创建新项目。',
+ configure_own_account_first:'请先接通微信读取器。',project_model_authorization_required:'需要确认模型分析授权。',
+ library_operation_failed:'无法访问本机会话库。',library_import_failed:'会话导入失败，已归档的消息仍可查看。',
+ library_account_changed:'会话库绑定了另一个微信账号。',library_conversation_unavailable:'找不到选定的会话。',
+ another_run_or_stale_lock:'微信读取器正在使用中，请稍后重试。',page_limit_reached_incomplete:'已到本轮分页上限，可继续导入。',
+ pagination_not_advancing:'微信读取器分页未前进，导入中断。'};
+const findingTypes={fact:['事实','green'],commitment:['表述或承诺','amber'],todo:['待办','green'],inference:['推断','grey'],question:['待核问题','grey']};
+function projectError(node, result) {
+  node.textContent=projectErrors[result?.error]??'操作未完成，请检查任务状态后重试。';node.hidden=false;
+}
+function getProject() {return projects.find(row=>row.id===activeProject);}
+function receiveProjects(list) {
+  projects=list;
+  if (!getProject()) activeProject=projects[0]?.id??null;
+  renderProjectNav();
+  if (projectMode==='projects') renderProject();
+}
+function chooseMode(mode) {
+  projectMode=mode;
+  $('workbench').hidden=mode!=='public';
+  $('project-view').hidden=mode!=='projects';
+  $('library-view').hidden=mode!=='library';
+  $('desktop-tasks').hidden=mode!=='public';
+  $('desktop-demo').hidden=mode!=='public';
+  $('case-select').hidden=mode!=='public';
+  $('example').hidden=mode!=='public'||reports[caseIndex]!==demo;
+  renderProjectNav();
+  if (mode==='public') renderCase();
+  if (mode==='projects') renderProject();
+  if (mode==='library') {renderLibrary();requestLibrary();}
+}
+function renderProjectNav() {
+  $('project-home').classList.toggle('active',projectMode==='projects');
+  $('library-home').classList.toggle('active',projectMode==='library');
+  $('public-home').classList.toggle('active',projectMode==='public');
+  const list=$('project-list');list.replaceChildren();
+  if (!projects.length) list.append(el('p','sidebar-empty','暂无项目'));
+  for (const row of projects) {
+    const item=button('nav-action'+(projectMode==='projects'&&row.id===activeProject?' active':''),undefined,()=>{
+      activeProject=row.id;selectedFinding=0;chooseMode('projects');
+    });
+    item.title=row.name;item.append(icon('file'),el('span','',row.name));list.append(item);
+  }
+}
+function renderProject() {
+  const view=$('project-view');view.replaceChildren();
+  const row=getProject();
+  if (!row) {
+    const empty=el('section','project-empty');empty.append(icon('chats'),el('h2','','暂无微信项目'),
+      button('control import','新建项目',()=>openProject(null)));view.append(empty);return;
+  }
+  const main=el('div','project-main'),side=el('aside','project-inspector');view.append(main,side);
+  const header=el('header','project-top'),title=el('div');
+  title.append(el('h2','',row.name),el('p','',row.objective));
+  const actions=el('div','project-actions');
+  const currentProgress=row.progress?.revision===row.revision?row.progress:null;
+  const busy=['reading','analyzing'].includes(currentProgress?.status)&&Date.now()-Date.parse(currentProgress.updated_at)<420000;
+  const edit=button('control','管理会话',()=>openProject(row));edit.prepend(icon('list'));edit.disabled=busy;
+  const archive=button('control','归档会话',()=>{
+    chooseMode('library');startLibrary('library.import-project',row.id);
+  });
+  archive.disabled=busy;
+  const analyze=button('control import',busy?(row.progress.status==='reading'?'读取消息中':'Codex 审阅中'):'联合分析',()=>openConsent(row));
+  analyze.disabled=busy;actions.append(edit,archive,analyze);header.append(title,actions);main.append(header);
+  const memberBlock=el('section','project-section');
+  const direct=row.conversations.filter(chat=>chat.kind==='direct').length;
+  memberBlock.append(el('h3','',`会话范围 · ${direct} 个单聊 · ${row.conversations.length-direct} 个群聊`),
+      el('p','project-muted',`消息起始日 ${dateLabel(row.initial_since)}`));
+  const members=el('div','project-members');
+  const accepted=row.analysis?.revision===row.revision;
+  for (const source of row.conversations) {
+    const item=el('div','project-member');
+    item.append(icon(source.kind==='group'?'group':'user'),el('strong','',source.name));
+    const coverage=accepted?row.analysis.sources?.find(value=>value.id===source.slug):null;
+    const counts=coverage?coverage.read_status==='failed'?'本次读取失败':`${coverage.reviewed} / ${coverage.total} 条`:source.kind==='group'?'群聊':'单聊';
+    item.append(el('span','member-count',counts));members.append(item);
+  }
+  memberBlock.append(members);main.append(memberBlock);
+  const result=el('section','project-section');result.append(el('h3','','项目结论'));main.append(result);
+  if (currentProgress?.status==='failed') {
+    const notice=el('p','task-error');projectError(notice,currentProgress);result.append(notice);
+  }
+  if (!accepted) {
+    result.append(el('p','project-muted',row.analysis?'项目范围已更新，等待新分析':'暂无联合分析'));
+    side.append(el('h3','','消息依据'),el('p','project-muted','暂无待查看的消息依据'));return;
+  }
+  result.append(el('p','',row.analysis.summary));
+  const list=el('div','project-findings');
+  const findings=row.analysis.findings??[];
+  findings.forEach((item,index)=>{
+    const action=button('control project-finding'+(index===selectedFinding?' selected':''),undefined,()=>{
+      selectedFinding=index;
+      for (const [position,node] of [...list.children].entries()) node.classList.toggle('selected',index===position);
+      renderProjectEvidence(side,item);
+    });
+    action.append(badge(findingTypes[item.kind]??findingTypes.question),el('strong','',item.title));list.append(action);
+  });
+  result.append(list);
+  renderProjectEvidence(side,findings[selectedFinding]??findings[0]);
+}
+function renderProjectEvidence(side,item) {
+  side.replaceChildren(el('h3','','消息依据'));
+  if (!item) {side.append(el('p','project-muted','暂无待查看的消息依据'));return;}
+  side.append(el('p','',item.detail));
+  for (const row of item.evidence) {
+    const block=el('section','project-evidence'),name=el('h3','',row.source_name);
+    const excerptType={quote:'引用消息',forwarded_unread:'转发记录未展开',attachment_unread:'附件未展开'}[row.message_kind];
+    const meta=[row.source_kind==='group'?'群聊':'单聊',row.attribution,excerptType,timeLabel(row.time)].filter(Boolean);
+    block.append(name,el('p','project-muted',meta.join(' · ')),
+      el('blockquote','quote',row.text),el('p','project-muted',row.evidence_id));side.append(block);
+  }
+}
+function openProject(row,forLibrary=false) {
+  libraryPicker=forLibrary;
+  editProject=row;picker=[];pickerCacheTime='';picked=new Set(row?.conversations?.map(value=>value.id)??[]);
+  const form=$('project-form');form.reset();
+  form.elements.name.value=row?.name??'';form.elements.objective.value=row?.objective??'';
+  form.elements.since.value=dateLabel(row?.initial_since)||new Date(Date.now()+8*3600000-6*86400000).toISOString().slice(0,10);
+  form.elements.since.max=new Date(Date.now()+8*3600000).toISOString().slice(0,10);
+  form.elements.since.readOnly=Boolean(row);
+  $('project-info').hidden=forLibrary;$('project-objective').hidden=forLibrary;
+  for (const field of ['name','objective','since']) form.elements[field].disabled=forLibrary;
+  $('project-dialog-heading').textContent=forLibrary?'添加会话':row?'管理项目会话':'新建项目';
+  $('project-save').textContent=forLibrary?'添加并导入':'保存项目';
+  $('project-form-error').hidden=true;
+  $('conversation-filter').value='';$('conversation-kind').value='all';$('project-save').disabled=true;
+  $('project-dialog').showModal();refreshPicker();
+}
+function refreshPicker() {
+  if (pickerStatus==='loading') return;
+  pickerStatus='loading';$('conversation-refresh').disabled=true;$('project-form-error').hidden=true;
+  renderPicker();desktopBridge.postMessage({type:'project.contacts'});
+}
+function updatePickerCount() {
+  $('conversation-count').textContent=pickerStatus==='ready'
+    ? `已选择 ${picked.size} / ${picker.length} 个会话${pickerCacheTime?' · 缓存于 '+pickerCacheTime:''}`
+    : `已选择 ${picked.size} 个会话`;
+  $('project-save').disabled=pickerStatus!=='ready'||picked.size<1||picked.size>20;
+}
+function renderPicker() {
+  const list=$('conversation-picker');list.replaceChildren();
+  const ready=pickerStatus==='ready';
+  $('conversation-filter').disabled=!ready;$('conversation-kind').disabled=!ready;
+  updatePickerCount();
+  if (!ready) {
+    list.append(el('p','sidebar-empty',pickerStatus==='error'?'未能加载会话列表':'正在读取会话名称…'));return;
+  }
+  const term=$('conversation-filter').value.trim().toLowerCase(),kind=$('conversation-kind').value;
+  const shown=picker.filter(item=>(kind==='all'||kind===item.kind)&&item.name.toLowerCase().includes(term));
+  if (!shown.length) list.append(el('p','sidebar-empty',picker.length?'没有匹配的会话':'微信读取器返回了空会话列表'));
+  const duplicates=new Map();for (const item of picker) duplicates.set(item.name,(duplicates.get(item.name)??0)+1);
+  for (const item of shown) {
+    const label=el('label','picker-row'),input=el('input');input.type='checkbox';input.checked=picked.has(item.id);
+    input.addEventListener('change',()=>{
+      if (input.checked) picked.add(item.id);else picked.delete(item.id);
+      updatePickerCount();
+    });
+    const title=duplicates.get(item.name)>1?item.name+' · …'+item.id.slice(-6):item.name;
+    label.append(input,icon(item.kind==='group'?'group':'user'),el('span','',title));list.append(label);
+  }
+}
+function openConsent(row) {
+  consentProject=row;$('project-analyze-form').reset();
+  const scope=$('project-scope');scope.replaceChildren(el('p','',`${row.name} · ${dateLabel(row.initial_since)} 起`));
+  const list=el('ul','anchors');for (const item of row.conversations) list.append(el('li','',`${item.kind==='group'?'群聊':'单聊'} · ${item.name}`));
+  scope.append(list,el('p','', '所选会话的可读历史将归档在本机。分析范围内每个会话最多发送最近 80 条，每条最多 800 字符。'));$('project-consent').showModal();
+}
+function projectResult(type,result) {
+  if (type==='project.contacts') {
+    $('conversation-refresh').disabled=false;
+    if (!$('project-dialog').open) {pickerStatus='idle';return;}
+    if (result.status!=='ok') {pickerStatus='error';renderPicker();projectError($('project-form-error'),result);return;}
+    const found=new Map((editProject?.conversations??[]).map(item=>[item.id,item]));
+    for (const item of result.conversations) found.set(item.id,item);
+    picker=[...found.values()];pickerStatus='ready';pickerCacheTime=result.cached?(timeLabel(result.updated_at)||'上次成功读取'):'';renderPicker();
+  } else if (type==='project.save') {
+    if (result.status!=='ok') {projectError($('project-form-error'),result);$('project-save').disabled=false;return;}
+    $('project-dialog').close();activeProject=result.id;selectedFinding=0;chooseMode('projects');
+  } else if (result.status!=='ok') {
+    projectError($('message'),result);
+  }
+}
+const libraryStates={queued:'等待导入',importing:'导入中',ready:'已归档',failed:'导入失败'};
+function requestLibrary() {
+  if (libraryListPending) return;
+  libraryListPending=true;desktopBridge.postMessage({type:'library.list'});
+}
+function libraryStatus(text) {
+  const notice=$('library-status');notice.textContent=text;notice.hidden=!text;
+}
+function startLibrary(type,id,request) {
+  libraryOperations++;
+  libraryStatus('正在导入会话…');renderLibrary();
+  desktopBridge.postMessage({type,id,request,token:'user'});
+}
+function libraryDate(timestamp) {
+  return timestamp?new Date((timestamp+28800)*1000).toISOString().slice(0,10):'';
+}
+function renderLibrary() {
+  const selected=libraryConversations.find(row=>row.id===librarySelected);
+  const list=$('library-list');list.replaceChildren();
+  for (const row of libraryConversations) {
+    const action=button('nav-action library-row'+(row===selected?' active':''),undefined,()=>{
+      if (row.id===librarySelected) return;
+      librarySelected=row.id;libraryQuery='';$('library-keyword').value='';
+      renderLibrary();requestLibraryMessages(0);
+    });
+    const title=el('div');
+    title.append(el('span','',row.name),el('small','',`${row.kind==='group'?'群聊':'单聊'} · ${row.total} 条 · ${libraryStates[row.status]??row.status}`));
+    action.title=row.name;action.append(icon(row.kind==='group'?'group':'user'),title);list.append(action);
+  }
+  $('library-detail').hidden=!selected;$('library-empty').hidden=Boolean(selected);
+  if (!selected) return;
+  $('library-name').textContent=selected.name;
+  const dates=selected.earliest?`${libraryDate(selected.earliest)} 至 ${libraryDate(selected.latest)}`:'';
+  $('library-meta').textContent=[
+    `${selected.total} 条`,dates,libraryStates[selected.status],selected.error?projectErrors[selected.error]??'导入中断':''
+  ].filter(Boolean).join(' · ');
+  $('library-sync').disabled=libraryOperations>0;
+  $('library-sync').textContent=selected.status==='ready'?'同步':'继续导入';
+}
+function requestLibraryMessages(page) {
+  if (!librarySelected) return;
+  $('library-prev').disabled=true;$('library-next').disabled=true;
+  $('library-page').textContent='查询中…';
+  desktopBridge.postMessage({type:'library.search',id:librarySelected,token:String(++libraryToken),request:{keyword:libraryQuery,page}});
+}
+function libraryResult({type,token,result}) {
+  if (type==='library.list') {
+    libraryListPending=false;
+    if (result.status!=='ok') {projectError($('library-status'),result);return;}
+    const before=libraryConversations.find(row=>row.id===librarySelected);
+    libraryConversations=result.conversations;
+    if (!libraryConversations.some(row=>row.id===librarySelected)) librarySelected=libraryConversations[0]?.id??'';
+    renderLibrary();
+    const current=libraryConversations.find(row=>row.id===librarySelected);
+    if (current&&(!before||before.id!==current.id||(libraryPage===0&&before.total!==current.total))) requestLibraryMessages(0);
+    return;
+  }
+  if (type==='library.search') {
+    if (token!==String(libraryToken)) return;
+    const list=$('library-messages');list.replaceChildren();
+    if (result.status!=='ok') {
+      const error=el('p','task-error');projectError(error,result);list.append(error);
+      $('library-page').textContent='';return;
+    }
+    libraryPage=result.page;
+    $('library-page').textContent=`第 ${libraryPage+1} 页`;
+    $('library-prev').disabled=libraryPage===0;$('library-next').disabled=!result.has_more;
+    if (!result.messages.length) list.append(el('p','library-status project-muted',libraryQuery?'没有匹配的消息':'暂无已导入消息'));
+    for (const row of result.messages) {
+      const message=el('article','library-message');
+      message.append(el('p','library-meta',`${timeLabel(row.time)} · ${row.attribution} · ${row.evidence_id}`),el('p','',row.text));
+      list.append(message);
+    }
+    return;
+  }
+  if (token==='user') libraryOperations=Math.max(0,libraryOperations-1);
+  if (result.status==='ok') {
+    if (libraryOperations===0) libraryStatus('');
+  } else {
+    projectError($('library-status'),result);
+    if (!token&&projectMode!=='library') projectError($('message'),result);
+  }
+  requestLibrary();
+}
+if (desktopBridge) {
+  document.body.classList.add('desktop');$('app-title').textContent='微信调查工作台';
+  $('project-sidebar').hidden=false;$('window-controls').hidden=false;
+  for (const [id,symbol] of Object.entries({'project-home':'chats','library-home':'list','library-add':'plus','public-home':'globe','project-new':'plus',
+    'project-dialog-close':'close','project-consent-close':'close','conversation-refresh':'reset'})) $(id).prepend(icon(symbol));
+  for (const control of document.querySelectorAll('[data-window]')) {
+    control.append(icon(control.dataset.window==='minimize'?'minus':control.dataset.window==='maximize'?'maximize':'close'));
+    control.addEventListener('click',()=>desktopBridge.postMessage({type:'window.action',action:control.dataset.window}));
+  }
+  const caption=document.querySelector('.top');
+  caption.addEventListener('pointerdown',event=>{
+    if (event.button===0&&!event.target.closest('button,select,input')) desktopBridge.postMessage({type:'window.action',action:'drag'});
+  });
+  $('project-home').addEventListener('click',()=>chooseMode('projects'));$('public-home').addEventListener('click',()=>chooseMode('public'));
+  $('library-home').addEventListener('click',()=>chooseMode('library'));
+  $('library-add').addEventListener('click',()=>openProject(null,true));
+  $('library-sync').addEventListener('click',()=>startLibrary('library.sync',librarySelected));
+  $('library-search').addEventListener('submit',event=>{
+    event.preventDefault();libraryQuery=$('library-keyword').value.trim();requestLibraryMessages(0);
+  });
+  $('library-prev').addEventListener('click',()=>requestLibraryMessages(libraryPage-1));
+  $('library-next').addEventListener('click',()=>requestLibraryMessages(libraryPage+1));
+  setInterval(()=>{if (projectMode==='library') requestLibrary();},2500);
+  $('project-new').addEventListener('click',()=>openProject(null));
+  $('project-dialog-close').addEventListener('click',()=>$('project-dialog').close());
+  $('project-consent-close').addEventListener('click',()=>$('project-consent').close());
+  $('conversation-filter').addEventListener('input',renderPicker);$('conversation-kind').addEventListener('change',renderPicker);
+  $('conversation-refresh').addEventListener('click',refreshPicker);
+  $('project-form').addEventListener('submit',event=>{
+    event.preventDefault();const form=new FormData(event.currentTarget);$('project-save').disabled=true;
+    if (libraryPicker) {
+      $('project-dialog').close();startLibrary('library.add',undefined,{sources:[...picked]});return;
+    }
+    desktopBridge.postMessage({type:'project.save',id:editProject?.id,request:{name:form.get('name'),objective:form.get('objective'),since:form.get('since'),sources:[...picked]}});
+  });
+  $('project-analyze-form').addEventListener('submit',event=>{
+    event.preventDefault();$('project-consent').close();
+    desktopBridge.postMessage({type:'project.analyze',id:consentProject.id,request:{revision:consentProject.revision,model_authorized:true}});
+  });
+  chooseMode('projects');
+}
+const taskErrors={task_runtime_missing:'工作台找不到本机的 Python 或调查 CLI。',codex_cli_not_found:'找不到本机的 Codex CLI。',
+  codex_run_failed:'Codex 运行失败，已写入的发现仍可查看。',sensitive_query_rejected:'请输入公开身份关键词，移除敏感信息。',
+  one_to_twelve_public_queries_required:'请填写 1 至 12 条公开查询词。',task_already_running:'该任务仍在运行。',
+  task_not_running:'该任务当前没有运行。',invalid_task_profile_url:'请输入有效的公开主页链接。',
+  codex_review_invalid:'Codex 审阅结果无法解析。',codex_review_unfetched_source:'审阅结果引用了未抓取的来源。',
+  use_short_public_identity_keywords_not_chat_transcripts:'请填写简短的对象、目标和查询词。'};
+const taskStates={ready:['待运行','grey'],running:['运行中','green'],completed:['报告已更新','green'],stopped:['已停止','grey'],
+  failed:['失败','red'],no_report:['未生成报告','amber'],interrupted:['已中断','amber']};
+function renderTasks(tasks) {
+  const list=$('task-list');list.replaceChildren();
+  if (!tasks.length) list.append(el('p','task-empty','暂无任务'));
+  for (const item of tasks) {
+    const row=el('article','task-row');
+    const state=item.status==='running'&&Date.now()-Date.parse(item.updated_at)>30000?'interrupted':item.status;
+    const title=el('div','task-row-head');
+    const phases={searching:'搜索中',fetching:'抓取原文',reviewing:'Codex 审阅',publishing:'发布证据'};
+    title.append(el('strong','',item.subject),badge(state==='running'?[phases[item.phase]??'运行中','green']:(taskStates[state]??taskStates.ready)));
+    const meta=el('p','task-meta',`${item.searches??0} 次搜索 · ${item.findings??0} 项发现 · ${item.attempt??0} 次运行`);
+    const actions=el('div','task-actions');
+    if (state==='running') actions.append(button('control','停止',()=>desktopBridge.postMessage({type:'task.stop',id:item.id})));
+    if (['ready','failed','stopped','interrupted','no_report'].includes(state)) {
+      actions.append(button('control',state==='ready'?'运行':'重试',()=>desktopBridge.postMessage({type:'task.run',id:item.id})));
+    }
+    const reportIndex=desktopReports.findIndex(report=>report.investigation_id===item.id);
+    if (reportIndex>=0) actions.append(button('control','查看证据图',()=>{
+      replaceReports(desktopReports);caseIndex=reportIndex;selection={type:'root'};filter='all';setOptions();renderCase();
+      $('desktop-demo').textContent='查看示例';$('task-dialog').close();
+    }));
+    row.append(title,meta);
+    if (item.error) row.append(el('p','task-error',taskErrors[item.error]??'本次运行失败'));
+    if (actions.children.length) row.append(actions);
+    list.append(row);
+  }
+}
+new ResizeObserver(()=>{
+  if ((view.clientWidth<575)!==compact) renderCase();
+  else fit();
+}).observe(view);
+</script>
+</body>
+</html>
