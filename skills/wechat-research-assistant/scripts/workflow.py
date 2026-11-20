@@ -49,18 +49,14 @@ def secure_private(path):
     if os.name != 'nt':
         path.chmod(0o700)
         return
-    # Replace access rules while retaining the existing owner/group metadata.
+    # Apply a DACL-only descriptor without requesting owner or audit privileges.
     # The path is passed through env, not interpolated into PowerShell code.
     code = r'''
 $ErrorActionPreference = 'Stop'
 try {
-# A parent PowerShell 7 process may export a module path incompatible with
-# Windows PowerShell 5.1. Load this engine's own security cmdlets explicitly.
-Import-Module (Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1') -ErrorAction Stop
 $p = $env:WECHAT_WORKFLOW_PRIVATE_DIR
-$acl = Get-Acl -LiteralPath $p
+$acl = [System.Security.AccessControl.DirectorySecurity]::new()
 $acl.SetAccessRuleProtection($true, $false)
-foreach ($rule in @($acl.Access)) { $acl.RemoveAccessRuleSpecific($rule) }
 $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
 $sys = [System.Security.Principal.SecurityIdentifier]::new('S-1-5-18')
 $rights = [System.Security.AccessControl.FileSystemRights]::FullControl
@@ -71,7 +67,7 @@ foreach ($who in @($sid, $sys)) {
  $r = [System.Security.AccessControl.FileSystemAccessRule]::new($who, $rights, $inherit, $propagate, $allow)
  $acl.AddAccessRule($r)
 }
-Set-Acl -LiteralPath $p -AclObject $acl
+[System.IO.Directory]::SetAccessControl($p, $acl)
 } catch {
  [Console]::Error.WriteLine(('ACL_FAILURE={0},{1}' -f $_.Exception.GetType().Name, ($_.FullyQualifiedErrorId -split ',')[0]))
  exit 1
@@ -250,15 +246,24 @@ def review_of(row, source, self_id):
 
 
 class Reader:
-    def __init__(self, exe):
+    def __init__(self, exe, home=None):
         self.exe = exe
+        self.env = dict(os.environ, WEFLOW_HOME=str(home)) if home is not None else None
 
     def call(self, *args):
         try:
             p = subprocess.run([self.exe, '--json', *args], capture_output=True,
-                               timeout=120, encoding='utf-8', errors='strict')
-        except (OSError, subprocess.TimeoutExpired, UnicodeError):
-            raise WorkflowError('reader_unavailable_or_timeout') from None
+                               timeout=120, encoding='utf-8', errors='strict', env=self.env)
+        except FileNotFoundError:
+            raise WorkflowError('reader_executable_not_found') from None
+        except PermissionError:
+            raise WorkflowError('reader_launch_access_denied') from None
+        except OSError:
+            raise WorkflowError('reader_launch_failed') from None
+        except subprocess.TimeoutExpired:
+            raise WorkflowError('reader_timeout') from None
+        except UnicodeError:
+            raise WorkflowError('reader_invalid_encoding') from None
         # No upstream stdout/stderr in exceptions: they may contain secrets/body.
         try:
             doc = json.loads(p.stdout, parse_int=str)
@@ -450,14 +455,15 @@ def init(workspace, private):
     return {'status': 'initialized_config_required'}
 
 
-def main():
+def main(argv=None, emit=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command', choices=['init', 'doctor', 'sync', 'commit'])
     parser.add_argument('--workspace', required=True, type=Path)
     parser.add_argument('--source')
     parser.add_argument('--batch')
     parser.add_argument('--report')
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    emit = emit or (lambda result: print(json.dumps(result, ensure_ascii=False)))
     workspace = args.workspace.expanduser().resolve()
     private = workspace / '.private'
     try:
@@ -468,7 +474,8 @@ def main():
             else:
                 c = config(private)
                 state = bound_state(private, c)
-                reader = Reader(c['reader_executable'])
+                home = private / 'weflow'
+                reader = Reader(c['reader_executable'], home if (home / 'config.json').is_file() else None)
                 if args.command == 'doctor':
                     verify_account(reader, c)
                     result = {'status': 'account_matches', 'selected_sources': len(c['conversations']),
@@ -479,11 +486,11 @@ def main():
                     if not all([args.source, args.batch, args.report]):
                         raise WorkflowError('commit_requires_source_batch_report')
                     result = commit(workspace, private, c, args.source, args.batch, args.report)
-        print(json.dumps(result, ensure_ascii=False))
+        emit(result)
         return 2 if isinstance(result, list) and any(r['status'] == 'failed' for r in result) else 0
     except (WorkflowError, OSError, ValueError, TypeError, KeyError, OverflowError):
         e = sys.exc_info()[1]
-        print(json.dumps({'status': 'failed', 'error': str(e) if isinstance(e, WorkflowError) else 'local_operation_failed'}, ensure_ascii=False))
+        emit({'status': 'failed', 'error': str(e) if isinstance(e, WorkflowError) else 'local_operation_failed'})
         return 2
 
 
