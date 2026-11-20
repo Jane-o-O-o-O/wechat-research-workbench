@@ -18,27 +18,30 @@ import sys
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, parse_qsl, quote, urlencode, urljoin, urlsplit, urlunsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 import uuid
 import xml.etree.ElementTree as ET
 
 from workflow import atomic_write, lock, now, read_json, redact, secure_private, TZ, WorkflowError
+import research_sources as extra
+from research_sources import SearchError
+from evidence_chain import build_chain
+from canvas_export import export_canvas
 
 UA = 'WechatResearchAssistant/0.2 (keyless public research; low-volume use)'
-SOURCES = ('bing', 'ddg', 'crossref', 'github', 'wikipedia', 'ror')
-PROFILES = {'web': ['bing'], 'academic': ['crossref', 'wikipedia'],
-            'software': ['github', 'bing'], 'organization': ['bing', 'ror', 'wikipedia'],
-            'all': ['bing', 'crossref', 'github', 'wikipedia', 'ror']}
-API_SOURCES = {'crossref', 'github', 'wikipedia', 'ror'}
+DIRECT_SOURCES = ('bing', 'ddg', 'crossref', 'github', 'wikipedia', 'ror', 'sogou_wechat', *extra.EXTRA_APIS)
+SOURCES = (*DIRECT_SOURCES, 'searxng')
+PROFILES = {'web': ['bing'], 'academic': ['crossref', 'openalex_authors', 'wikipedia'],
+            'software': ['github', 'bing'], 'organization': ['bing', 'ror', 'openalex', 'wikipedia'],
+            'school': ['ror', 'openalex'], 'company': ['bing', 'gleif'],
+            'social': ['sogou_wechat', 'bluesky'], 'all': list(DIRECT_SOURCES)}
+API_SOURCES = {'crossref', 'github', 'wikipedia', 'ror', 'searxng', *extra.EXTRA_APIS}
+DOCTOR_QUERIES = {'ror': 'Tsinghua University', 'openalex': 'Tsinghua University',
+                  'openalex_authors': 'Marie Curie', 'gleif': 'Microsoft Corporation',
+                  'sogou_wechat': '清华大学', 'bluesky': 'Bluesky'}
 MAX_BYTES = 4_000_000
 TTL = 86400
 STALE_TTL = 7 * TTL
-
-
-class SearchError(Exception):
-    def __init__(self, code, status=None, wait=900):
-        self.code, self.status, self.wait = code, status, wait
-        super().__init__(code)
 
 
 def query_guard(q):
@@ -47,7 +50,7 @@ def query_guard(q):
     if (re.search(r'(?i)(?:sk-[\w-]{8,}|bearer\s|api[_ -]?key\s*[:=]|password\s*[:=]|密码|验证码|身份证|银行卡)', q)
             or re.search(r'[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}', q)
             or re.search(r'(?<!\d)(?:\d[ -]?){10,}\d(?!\d)', q)
-            or re.search(r'(?i)[?&](?:key|token|secret|password)=', q)):
+            or re.search(r'(?i)(?:[?&](?:key|token|secret|password)=|\bwxid_[\w-]+|\b\w+@chatroom\b)', q)):
         raise SearchError('sensitive_query_rejected')
     return ' '.join(q.split())
 
@@ -93,19 +96,44 @@ class PublicRedirect(HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
+class InstanceRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise SearchError('instance_redirect_refused', code)
+
+
+def instance_base(url):
+    try:
+        p = urlsplit(url)
+        if (p.username or p.password or p.query or p.fragment or not p.hostname
+                or any(c.isspace() for c in url) or '\\' in url):
+            raise ValueError
+        if p.hostname in ('127.0.0.1', '::1') and p.scheme in ('http', 'https') and p.port:
+            return url.rstrip('/')
+        if p.scheme == 'https' and clean_url(url):
+            return url.rstrip('/')
+    except ValueError:
+        pass
+    raise SearchError('instance_requires_https_or_explicit_loopback_port')
+
+
 def blocked(body):
     b = body.lower()
     # Specific challenge markers; normal documentation can mention "captcha".
     return any(x in b for x in ('anomaly.js', 'anomaly-modal', 'challenge-platform',
-                                'verify you are human', '请完成验证', '请输入验证码'))
+                                'verify you are human', '请完成验证', '请输入验证码',
+                                '<title>验证码', 'antispider.sogou.com', '请输入下方的验证码'))
 
 
-def request(url, timeout=12):
-    url = public_destination(url)
+def request(url, timeout=12, instance=False):
+    loopback = instance and urlsplit(url).hostname in ('127.0.0.1', '::1')
+    if not loopback:
+        url = public_destination(url)
+    opener = (build_opener(ProxyHandler({}), InstanceRedirect()) if instance
+              else build_opener(PublicRedirect()))
     req = Request(url, headers={'User-Agent': UA, 'Accept': 'application/json,application/rss+xml,text/html;q=0.8',
                                 'Accept-Encoding': 'identity'})
     try:
-        with build_opener(PublicRedirect()).open(req, timeout=timeout) as r:
+        with opener.open(req, timeout=timeout) as r:
             data = r.read(MAX_BYTES + 1)
             if len(data) > MAX_BYTES:
                 raise SearchError('response_too_large')
@@ -113,7 +141,7 @@ def request(url, timeout=12):
             text = data.decode(charset, errors='replace')
             if r.status == 202 or blocked(text):
                 raise SearchError('challenge_or_captcha', r.status)
-            return text, r.headers.get_content_type(), clean_url(r.url)
+            return text, r.headers.get_content_type(), r.url if loopback else clean_url(r.url)
     except HTTPError as e:
         retry = e.headers.get('Retry-After', '') if e.headers else ''
         wait = min(86400, max(60, int(retry))) if retry.isdigit() else 900
@@ -159,8 +187,12 @@ def item(source, title, url, snippet='', **extra):
     url = clean_url(url)
     if not url:
         return None
+    title = plain(title)
+    # Release feeds often use only the version as the headline.
+    if source != 'rss' or not re.fullmatch(r'v?[0-9]{1,4}(?:\.[0-9]{1,4}){2}', title):
+        title = redact(title)
     return {'evidence_id': 'web-' + hashlib.sha256((source + '\0' + url).encode()).hexdigest()[:20],
-            'source': source, 'title': redact(plain(title))[:350], 'url': url,
+            'source': source, 'title': title[:350], 'url': url,
             'snippet': redact(plain(snippet))[:1000], 'candidate_only': True, **extra}
 
 
@@ -194,7 +226,7 @@ class DDG(HTMLParser):
                 self.active = None
 
 
-def endpoint(source, q, limit, lang):
+def endpoint(source, q, limit, lang, searxng_url=None):
     if source == 'bing':
         return 'https://www.bing.com/search?' + urlencode({'q': q, 'format': 'rss', 'count': limit,
                                                          'mkt': 'zh-CN' if lang == 'zh' else 'en-US'})
@@ -209,7 +241,7 @@ def endpoint(source, q, limit, lang):
         return f'https://{lang}.wikipedia.org/w/rest.php/v1/search/page?' + urlencode({'q': q, 'limit': limit})
     if source == 'ror':
         return 'https://api.ror.org/v2/organizations?' + urlencode({'query': q})
-    raise SearchError('unknown_source')
+    return extra.endpoint(source, q, limit, lang, searxng_url)
 
 
 def parse(source, body, limit, lang='en'):
@@ -230,6 +262,10 @@ def parse(source, body, limit, lang='en'):
             if not p.results and 'no-results' not in body:
                 raise SearchError('search_markup_changed_or_blocked')
             results = p.results[:limit]
+        elif source == 'sogou_wechat':
+            results = extra.parse_sogou(body, limit, item, redact)
+        elif source in (*extra.EXTRA_APIS, 'searxng'):
+            results, notes = extra.parse_json(source, body, limit, item, clean_url)
         else:
             d = json.loads(body)
             if source == 'crossref':
@@ -266,14 +302,23 @@ def parse(source, body, limit, lang='en'):
         raise SearchError('upstream_schema_changed') from None
 
 
-def search_one(source, q, limit, lang, cache_dir, fresh=False, timeout=12, transport=request):
-    key = hashlib.sha256(json.dumps([source, q, limit, lang]).encode()).hexdigest()
+def search_one(source, q, limit, lang, cache_dir, fresh=False, timeout=12, transport=request, searxng_url=None):
+    params = [source, q, limit, lang]
+    instance_id = ''
+    if source == 'searxng' and searxng_url:
+        searxng_url = instance_base(searxng_url)
+        params.append(searxng_url)
+        instance_id = '-' + hashlib.sha256(searxng_url.encode()).hexdigest()[:16]
+    key = hashlib.sha256(json.dumps(params).encode()).hexdigest()
     cached_file = cache_dir / (key + '.json')
-    cooldown_file = cache_dir / ('cooldown-' + source + '.json')
+    cooldown_file = cache_dir / ('cooldown-' + source + instance_id + '.json')
     cached = read_json(cached_file, {})
     clock = time.time()
     age = clock - cached.get('fetched_epoch', 0)
     base = {'source': source, 'interface': 'public_api' if source in API_SOURCES else 'public_page_best_effort'}
+    if source == 'searxng' and not searxng_url:
+        return {**base, 'status': 'not_configured', 'error': 'searxng_instance_not_configured',
+                'results': [], 'notes': []}
     if not fresh and cached and 0 <= age < TTL:
         return {**base, 'status': 'cached', 'fetched_at': cached['fetched_at'],
                 'results': cached['results'], 'notes': cached.get('notes', [])}
@@ -283,7 +328,9 @@ def search_one(source, q, limit, lang, cache_dir, fresh=False, timeout=12, trans
         error = SearchError('source_cooling_down', cool.get('http_status'))
     else:
         try:
-            body, _, _ = transport(endpoint(source, q, limit, lang), timeout)
+            url = endpoint(source, q, limit, lang, searxng_url)
+            body, _, _ = (request(url, timeout, instance=True) if source == 'searxng' and transport is request
+                          else transport(url, timeout))
             results, notes = parse(source, body, limit, lang)
             data = {'fetched_at': now(), 'fetched_epoch': clock, 'results': results, 'notes': notes}
             atomic_write(cached_file, data)
@@ -317,13 +364,16 @@ def combine(reports):
 
 
 def run_search(private, query, sources, limit=5, lang='auto', fresh=False, timeout=12,
-               fallback=True, transport=request):
+               fallback=True, transport=request, searxng_url=None, profile=None, probe=False, operation='search'):
     q = query_guard(query)
-    if lang == 'auto':
-        lang = 'zh' if re.search(r'[\u3400-\u9fff]', q) else 'en'
     cache = private / 'search' / 'cache'
     def one(source):
-        return search_one(source, q, limit, lang, cache, fresh, timeout, transport)
+        source_query = DOCTOR_QUERIES.get(source, q) if probe else q
+        source_lang = ('zh' if re.search(r'[\u3400-\u9fff]', source_query) else 'en') if lang == 'auto' else lang
+        result = search_one(source, source_query, limit, source_lang, cache, fresh, timeout, transport, searxng_url)
+        if probe:
+            result['probe_query'] = source_query
+        return result
     with ThreadPoolExecutor(max_workers=4) as pool:
         reports = list(pool.map(one, sources))
     # No hidden substitution of scholarly search for general web coverage.
@@ -331,13 +381,16 @@ def run_search(private, query, sources, limit=5, lang='auto', fresh=False, timeo
     if fallback and web and web['status'] in ('unavailable', 'stale_cache') and 'ddg' not in sources:
         reports.append(one('ddg'))
     results = combine(reports)
-    incomplete = any(r['status'] in ('unavailable', 'stale_cache') or r.get('notes') for r in reports)
+    incomplete = any(r['status'] in ('unavailable', 'stale_cache', 'not_configured') or r.get('notes') for r in reports)
     usable = any(r['status'] in ('ok', 'cached', 'stale_cache') for r in reports)
     report = {'status': ('partial' if incomplete else 'ok') if usable else 'unavailable',
               'queried_at': now(), 'query': q, 'api_key_required': False, 'content_is_untrusted': True,
               'coverage': 'selected_sources_only_not_an_exhaustive_background_check',
               'sources': reports, 'results': results}
+    if profile:
+        report['browser_sources'] = extra.browser_links(profile, q)
     batch = datetime.now(TZ).strftime('%Y%m%dT%H%M%S') + '-' + uuid.uuid4().hex[:8]
+    report.update(run_id=batch, operation=operation)
     out = private / 'search' / 'runs' / (batch + '.json')
     atomic_write(out, report)
     report['saved_report'] = str(out)
@@ -348,13 +401,19 @@ def fetch_page(private, url, timeout=12):
     # Separate explicit operation: search never automatically downloads all hits.
     safe = public_destination(url)
     body, kind, final_url = request(safe, timeout)
-    if kind not in ('text/html', 'text/plain', 'application/xhtml+xml'):
+    title = ''
+    if kind in ('text/html', 'application/xhtml+xml'):
+        parser = TextHTML()
+        parser.feed(body)
+        title = ' '.join(parser.title_parts)
+        text = ' '.join(' '.join(parser.parts).split())
+    elif kind == 'text/plain' or kind == 'application/json' or kind.endswith('+json'):
+        text = body
+    else:
         raise SearchError('fetch_text_or_html_only_use_document_skill_for_other_types')
-    p = TextHTML(); p.feed(body)
-    text = plain(body) if kind != 'text/plain' else body
+    text = redact(text)
     report = {'status': 'ok', 'url': final_url, 'fetched_at': now(), 'content_is_untrusted': True,
-              'title': redact(' '.join(p.title_parts))[:350], 'text': redact(text)[:16000],
-              'truncated': len(redact(text)) > 16000,
+              'title': redact(title)[:350], 'text': text[:16000], 'truncated': len(text) > 16000,
               'evidence_id': 'page-' + hashlib.sha256(final_url.encode()).hexdigest()[:20]}
     path = private / 'search' / 'pages' / (hashlib.sha256(final_url.encode()).hexdigest() + '.json')
     atomic_write(path, report)
@@ -362,12 +421,38 @@ def fetch_page(private, url, timeout=12):
     return report
 
 
-def main():
+def fetch_feed(private, url, limit, timeout, rsshub_url=None):
+    if rsshub_url:
+        base = instance_base(rsshub_url)
+        route = urlsplit(url)
+        if (not url.startswith('/') or url.startswith('//') or '\\' in url or route.fragment
+                or urlunsplit(('', '', route.path, route.query, '')) != url):
+            raise SearchError('rsshub_requires_relative_route')
+        if any(k.lower() in ('token', 'key', 'api_key', 'password', 'secret', 'access_token')
+               for k, _ in parse_qsl(route.query)):
+            raise SearchError('credential_url_rejected')
+        url = base + url
+    body, _, final_url = request(url, timeout, instance=bool(rsshub_url))
+    try:
+        candidates = extra.parse_feed(body, final_url, limit, item)
+    except (ET.ParseError, ValueError):
+        raise SearchError('unexpected_feed_markup') from None
+    results = [row for row in candidates if row]
+    report = {'status': 'ok', 'url': final_url, 'fetched_at': now(), 'content_is_untrusted': True,
+              'results': results, 'notes': ['unsafe_or_missing_result_urls_omitted'] if len(results) != len(candidates) else []}
+    key = hashlib.sha256(final_url.encode()).hexdigest()
+    path = private / 'search' / 'feeds' / (key + '.json')
+    atomic_write(path, report)
+    report['saved_report'] = str(path)
+    return report
+
+
+def main(argv=None, emit=None):
     # Keep JSON readable when a Windows caller captures stdout under a legacy locale.
     if hasattr(sys.stdout, 'reconfigure'):
         sys.stdout.reconfigure(encoding='utf-8')
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument('command', choices=('search', 'doctor', 'fetch'))
+    ap.add_argument('command', choices=('search', 'doctor', 'fetch', 'catalog', 'feed', 'chain', 'canvas'))
     ap.add_argument('--workspace', type=Path, required=True)
     ap.add_argument('--query')
     ap.add_argument('--url')
@@ -377,34 +462,63 @@ def main():
     ap.add_argument('--lang', choices=('auto', 'en', 'zh'), default='auto')
     ap.add_argument('--fresh', action='store_true')
     ap.add_argument('--timeout', type=int, default=12)
-    args = ap.parse_args()
+    ap.add_argument('--searxng-url', help='Trusted SearXNG base URL')
+    ap.add_argument('--rsshub-url', help='Trusted RSSHub base URL for feed; pass its route with --url')
+    ap.add_argument('--input', type=Path, help='Private JSON input for chain or canvas')
+    args = ap.parse_args(argv)
+    emit = emit or (lambda result: print(json.dumps(result, ensure_ascii=False, indent=2)))
     try:
         if not 1 <= args.limit <= 10 or not 2 <= args.timeout <= 30:
             raise SearchError('invalid_limit_or_timeout')
-        sources = list(dict.fromkeys(args.sources.split(','))) if args.sources else PROFILES[args.profile]
+        sources = list(dict.fromkeys(args.sources.split(','))) if args.sources else list(PROFILES[args.profile])
         if not sources or any(s not in SOURCES for s in sources):
             raise SearchError('invalid_source_selection')
         if args.command == 'search':
             query_guard(args.query)
-        if args.command == 'fetch' and not args.url:
+        if args.command in ('fetch', 'feed') and not args.url:
             raise SearchError('url_required')
-        private = args.workspace.expanduser().resolve() / '.private'
+        if args.command == 'catalog':
+            query = query_guard(args.query) if args.query is not None else None
+            result = {'status': 'ok', 'profiles': PROFILES, 'automatic_sources': list(DIRECT_SOURCES),
+                      'configurable_sources': {'searxng': '--searxng-url', 'rsshub': 'feed --rsshub-url'},
+                      'browser_sources': extra.browser_links('all', query)}
+            emit(result)
+            return 0
+        if args.command == 'doctor' and not args.sources:
+            sources = list(DIRECT_SOURCES)
+        if args.searxng_url and not args.sources and (args.command == 'doctor' or args.profile in ('web', 'all')):
+            sources.append('searxng')
+        workspace = args.workspace.expanduser().resolve()
+        private = workspace / '.private'
         secure_private(private)
         with lock(private):
             if args.command == 'fetch':
                 result = fetch_page(private, args.url, args.timeout)
+            elif args.command == 'feed':
+                result = fetch_feed(private, args.url, args.limit, args.timeout, args.rsshub_url)
+            elif args.command == 'chain':
+                if not args.input:
+                    raise SearchError('chain_input_required')
+                source = (workspace / args.input).resolve()
+                if not source.is_relative_to(private):
+                    raise SearchError('chain_input_must_be_private')
+                result = build_chain(private, read_json(source), query_guard, clean_url)
+            elif args.command == 'canvas':
+                source = (workspace / args.input).resolve() if args.input else None
+                result = export_canvas(private, source)
             else:
                 # Doctor makes real low-volume public requests, not model calls.
-                result = run_search(private, args.query or 'Crossref',
-                    list(SOURCES) if args.command == 'doctor' and not args.sources else sources,
+                result = run_search(private, args.query or 'Crossref', sources,
                     args.limit if args.command == 'search' else 1, args.lang, args.fresh,
-                    args.timeout, fallback=args.command != 'doctor')
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+                    args.timeout, fallback=args.command != 'doctor', searxng_url=args.searxng_url,
+                    profile=args.profile if args.command == 'search' else None,
+                    probe=args.command == 'doctor' and not args.query, operation=args.command)
+        emit(result)
         return 2 if result['status'] == 'unavailable' else 0
     except (SearchError, WorkflowError, OSError, ValueError, KeyError, TypeError) as e:
         # No upstream bodies/tracebacks/query strings in diagnostic exceptions.
         code = e.code if isinstance(e, SearchError) else (str(e) if isinstance(e, WorkflowError) else 'local_operation_failed')
-        print(json.dumps({'status': 'failed', 'error': code}))
+        emit({'status': 'failed', 'error': code})
         return 2
 
 
