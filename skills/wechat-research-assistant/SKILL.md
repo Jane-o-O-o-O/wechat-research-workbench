@@ -7,6 +7,16 @@ description: Analyze selected WeChat conversations, maintain evidence-based rela
 
 把用户指定的微信会话变成持续维护的资料：直接事实、需求、承诺、待办、公开背景资料、可能的沟通含义与回复草稿。按用户的交往或业务目标组织，不强制一群一项目。
 
+Codex 运行 `scripts/research_cli.py`。用 `wechat init|doctor|sync|commit` 操作白名单内的会话，用 `research search|fetch|chain|canvas|doctor|catalog|feed` 做公开调查。命令需要 `--workspace`，JSON 返回使用 `data` 字段，失败时检查 `ok`、退出码和 `data.error`。例如 `python -B scripts/research_cli.py research chain --workspace <目录> --input <私有输入>`。Windows 工作台从同一目录订阅已写入的报告。
+
+从 Windows 工作台新建的调查只使用界面确认的公开查询词。由本地 CLI 抓取公开原文、调用 Codex 审阅并核对摘录及身份依据，再按任务 ID 发布报告。停止或重试时，已经发布的证据可继续查看。
+
+## 工作台会话库
+
+保存微信项目或在「会话库」添加会话后，仅分页导入当次明确选择的会话。WeFlow 返回的原始消息字段归档到资料目录 `.private/conversations.sqlite3`，按微信账号绑定并按会话独立保存进度。多个项目引用同一份会话资料。可导入范围取决于本机微信和读取器，媒体文件、语音转写及转发内页需另行取得。
+
+查找已经归档的消息时，先运行 `research_cli.py library list --workspace <目录>` 找到会话的 `id`。使用 `research_cli.py library search --workspace <目录> --id <会话ID>`，标准输入提供 `{"keyword":"交付","page":0}`。`keyword` 留空可分页查看最近消息。查询不访问微信或模型，返回正文摘要、时间和证据 ID，仍须按当前授权范围处理这些资料。需要补充消息时用 `library sync --workspace <目录> --id <会话ID>`。工作台联合分析按项目起始日从会话库取样，发送样本须经使用者确认。
+
 ## 首次使用
 
 先读 [Windows 部署与限制](references/windows.md)。确认运行电脑、本人账号、获准读取的会话、用户目标，以及采用当前 Codex 模型分析还是本地模型。创建独立工作目录，用 `scripts/workflow.py init --workspace <目录>` 初始化；配置只写入该目录 `.private/settings.json`。技能目录与运行资料目录分开，不把真实数据或密钥放入技能包。
@@ -27,9 +37,15 @@ WorkBuddy 可以直接调用 `weflow.exe --json chat messages <已授权来源ID
 
 需要公开背景调查时，先读 [搜索来源与操作](references/public-search.md)。直接调用 `scripts/public_search.py`，无需模型提供商的 web search 支持、注册搜索账号或配置 Key。
 
-用用户授权范围内的公司全称、姓名加机构、论文标题或软件名生成短查询；默认 `search --workspace <目录> --query "关键词"` 走 Bing RSS，失败时尝试 DuckDuckGo。按问题选 `--profile academic|software|organization` 调用 Crossref、GitHub、Wikipedia、ROR，不为每条聊天自动全源搜索。对同一背景复用缓存，无新线索时不重复查。
+用用户授权范围内的公司全称、姓名加机构、论文标题或软件名生成短查询。默认走 Bing RSS，不可用或只有旧缓存时尝试 DuckDuckGo。按问题选 `--profile social|school|company|academic|software|organization`。社交用搜狗微信公众号搜索和 Bluesky，学校用 ROR、OpenAlex，公司用 GLEIF 和官方查验入口。`catalog` 列出浏览器入口和可配置实例，`feed` 读取已知公开 RSS 或用户配置的 RSSHub 路由。只在用户指定可信实例时启用 SearXNG 或 RSSHub。
 
-检索结果只是候选线索。使用 `fetch --workspace <目录> --url <选定公开原文>` 或可用浏览器打开与身份匹配的原始页面，核对重要主张；保留链接、抓取时间、证据 ID、来源失败与过期缓存状态。部分失败/验证码不得解释为“没有相关公开资料”。百科和 ROR 不代替企业登记；国内/香港工商登记原件尚需官方渠道核实。首次部署用 `doctor` 检查目标机实际可达来源，结果写入验收记录。免费搜索不保证全网覆盖或 SLA。
+检索结果标记为候选。通过 `fetch --workspace <目录> --url <选定公开原文>` 或浏览器核对学校官网、公司登记、作者机构页、论文或平台帖子原文。搜狗 `title_search` 需要从标题搜索页点进公众号原文。以姓名加机构、项目或时间交叉核实，关联不足时保留同名候选。记录链接、抓取时间、证据 ID、来源失败与缓存状态。验证码、限流或不可达时保留失败状态。首次部署用 `doctor` 检查目标机实际可达来源。无新线索时复用缓存，不按聊天内容自动搜人。
+
+做人物背景调查时，对每条学校、任职、项目或公开账号说法分别建立证据链。只用用户确认的公开身份锚点。先用 `fetch` 存下可读原文，逐条核对摘录实际表达的含义，标出机构第一方、本人自述、二手报道、转载及原出处，用 `chain --workspace <目录> --input <私有输入 JSON>` 汇总。报告并列展示归属不明、单源支持、独立佐证和冲突。动态站点无法取得可复核摘录时，保留待核线索。核对方法与格式见 [公开搜索说明](references/public-search.md)。
+
+同一次调查持续使用同一个 `investigation_id`。把 `search` 返回的 `run_id` 纳入 `search_runs`，含空结果或部分失败的调用。仅在确有前序发现引出了下一步时填 `depends_on`，并用 `evidence[].discovery` 关联实际选用的候选。核对出新的关键发现时更新完整证据链报告。没有可归属的发现时，继续记录搜索和待核线索。来源和调用只显示在侧栏。
+
+用 `canvas --workspace <目录> --input <chain 返回的 saved_report>` 导出本地交互画布。画布和报告一起放在 `.private`。省略 `--input` 可选择多份报告。浏览器打开「跟踪本地报告」并授权 `.private/search/chains/` 后，可随 Agent 写入新版本更新。
 
 ## 分析规则
 

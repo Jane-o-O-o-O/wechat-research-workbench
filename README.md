@@ -1,10 +1,10 @@
-# 微信信息助理 · WeChat Research Assistant
+# 微信调查工作台 · WeChat Research Workbench
 
-[![tests](https://github.com/Jane-o-O-o-O/wechat-research-assistant/actions/workflows/tests.yml/badge.svg)](https://github.com/Jane-o-O-o-O/wechat-research-assistant/actions/workflows/tests.yml)
+[![tests](https://github.com/Jane-o-O-o-O/wechat-research-workbench/actions/workflows/tests.yml/badge.svg)](https://github.com/Jane-o-O-o-O/wechat-research-workbench/actions/workflows/tests.yml)
 
-供 Codex / WorkBuddy 使用的个人微信信息分析 Skill：通过现成的 WeFlow CLI 读取**用户选定的会话**，持续归档消息，结合已有资料和公开背景，整理需求、承诺、待办、项目进展与回复草稿。
+面向 Windows 的微信调查客户端，包含项目、会话库、公开调查任务和证据画布。工作台通过本地 Python CLI 连接读取器和 Codex，支持与 [微信信息助理 Skill](https://github.com/Jane-o-O-o-O/wechat-research-assistant) 共用资料目录。
 
-这是一个可读源码的工作流包，包含 Skill、Python 脚本、部署提示词和定时任务模板。公开搜索免 API Key；分析使用已有助手。默认下载已经编译好的 Windows CLI，**不需要 Git、Rust、Visual Studio 或 Windows SDK**。微信首次授权和登录仍由本人完成。
+此仓库随客户端提供兼容版本的 Skill 和 Python CLI。部署客户端时，使用本仓库的 `install.ps1` 安装配套版本，或把 `runtime.json` 指向本仓库的 CLI。只需要在 Codex 或 WorkBuddy 里使用独立 Skill 时，可以从配套仓库安装。
 
 ## 当前能力与验证范围
 
@@ -12,7 +12,7 @@
 | --- | --- |
 | 指定会话增量同步 | 已实现按来源分页、消息去重、账号绑定和私有归档 |
 | 分析与资料维护 | 由 Codex 按 Skill 执行，保留证据、日期和用户补充 |
-| 公开背景搜索 | 六个免 Key 来源；搜索与原文读取可独立使用 |
+| 公开背景搜索 | 通用搜索、社交、院校、公司与学术来源。支持独立搜索、来源目录、原文读取和公开订阅源 |
 | Windows 微信读取 | 支持发布版 v5.0.1 CLI 的消息格式；真实微信仍需目标电脑验收 |
 | 自动更新 | 提供桌面本地定时任务提示词，部署验收后启用 |
 | 附件、语音、朋友圈 | 未统一实现；当前只提取部分消息标题和引用，缺件会保留限制 |
@@ -70,7 +70,7 @@ CLI 下载检查只运行 `--version` 和 `--help`；这不等于已成功读取
 无需先接通微信；以下命令会在你选择的资料目录下创建私有搜索缓存。搜索词使用公开、非敏感的身份或项目关键词。
 
 ```powershell
-# 检查六个来源在当前电脑上的实际可达性
+# 检查程序化来源在当前电脑上的实际可达性
 py -3 .\skills\wechat-research-assistant\scripts\public_search.py doctor --workspace "$env:USERPROFILE\WeChatResearch"
 
 # 通用网页搜索：Bing RSS，故障时尝试 DuckDuckGo
@@ -97,6 +97,8 @@ Mac/Linux 使用 `python3` 并替换成本机路径即可试用公开搜索；Wi
 默认使用 24 小时缓存；请求失败时可提供最多 7 天内、保留原日期的旧缓存。限流或验证码进入冷却，不轮换代理或绕过验证。返回 `partial` / `unavailable` 时保留真实失败，不能据此断言目标没有公开资料。搜索结果是候选线索，重要事实需核对原始网页。
 
 来源文档、参数、限制与返回状态见 [公开搜索说明](skills/wechat-research-assistant/references/public-search.md)。免费搜索源可能限流、封禁或改版，本项目不承诺全网覆盖或 SLA。
+
+另有 `social`、`school`、`company` 搜索配置。`catalog` 列出国内社交站点、学校和企业官方查验入口。`feed` 读取已知 RSS 或 RSSHub 订阅，`--searxng-url` 可接入可信的 SearXNG 实例。`chain` 将已核对的公开摘录与用户确认的身份线索整理为可复核的证据链。
 
 ## 微信同步命令
 
@@ -131,13 +133,31 @@ py -3 .\skills\wechat-research-assistant\scripts\workflow.py commit --workspace 
 
 ## 项目结构
 
+### Windows 工作台
+
+在 Codex 发起调查，由技能运行 `research_cli.py` 的 `wechat` 或 `research` 命令。Windows 工作台用 WebView2 展示同一资料目录下的私有报告。默认读取 `%USERPROFILE%\WeChatResearch`，启动参数 `--workspace` 可切换。空目录可打开虚构示例。工作台自动显示同一调查的最新报告，独立 HTML 导出仍可打开。
+
+在安装了 .NET 8 SDK 的 Windows x64 上，运行 `dotnet publish desktop/WeChatResearch.Workbench.csproj -c Release`。运行发布目录的 `WeChatResearch.Workbench.exe` 需要 .NET 8 Desktop Runtime 和 WebView2 Runtime。原文链接通过默认浏览器打开。
+
+「微信项目」可把最多 20 个单聊和群聊编入同一项目。保存项目或在「会话库」中添加会话后，客户端分页归档所选会话在本机可读的历史。会话库支持增量同步、中文关键词搜索和独立导入进度。原始消息字段与索引保存在 `.private/conversations.sqlite3`，多个项目复用同一份归档。
+
+联合分析需要用户确认。Codex 收到项目起始日期范围内的最近消息样本，每个会话最多 80 条，每条最多 800 字符。项目页显示读取状态、样本数和范围内归档数，点击结论可查看消息摘录与证据编号。项目定义与报告存放在 `.private/projects/`。按格式遮盖的正文仍可能含姓名和业务信息。
+
+工作台的「调查任务」发起公开调查。启动前填写对象、目标和明确授权的公开查询词，可填已确认的公开主页。CLI 在独立的私有任务目录检索和抓取已选来源，使用本机 Codex 的模型和登录配置审阅材料。CLI 核对摘录和身份依据后发布报告。任务可停止或重试，已发布证据仍可查看。直接在 Codex 发起调查仍可按既有流程运行。
+
+构建后若需从工作台发起任务，在发布目录的 `runtime.json` 中配置 `python` 和 `cli` 两个绝对路径，分别指向 Python 3.10+ 可执行文件与已安装技能的 `scripts/research_cli.py`。工作台运行时不需要 .NET SDK。
+
 ```text
 skills/wechat-research-assistant/
   SKILL.md                  Codex 工作流入口
   scripts/workflow.py        选定会话的捕获与提交
   scripts/public_search.py   免 Key 搜索和公开原文读取
+  scripts/research_sources.py  社交、院校、公司和订阅来源
+  scripts/evidence_chain.py   人物归属与公开证据链
+  assets/investigation-canvas.html  可离线查看的关系画布
   references/               部署、来源与定时任务说明
 tests/                      虚构数据的离线检查
+desktop/                    Windows 工作台外壳和本地报告读取
 install.ps1                 Windows 当前用户技能安装
 install-reader.ps1          下载、核验、解压上游 Windows CLI
 给Codex的部署提示词.txt       首次部署可复制任务
